@@ -239,6 +239,27 @@ body {
     flex-shrink: 0;
 }
 
+/* Low Confidence Badge */
+.low-conf-badge {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(245, 158, 11, 0.1);
+    color: var(--warn);
+    border: 1px solid rgba(245, 158, 11, 0.2);
+    margin-left: 6px;
+    flex-shrink: 0;
+    cursor: help;
+}
+
+/* Low Confidence Filter Active */
+#btn-low-conf-filter.low-conf-active {
+    background: rgba(245, 158, 11, 0.15) !important;
+    border-color: var(--warn) !important;
+    font-weight: 700;
+}
+
 .skipped-badge {
     font-size: 9px;
     font-weight: 700;

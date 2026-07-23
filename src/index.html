@@ -635,6 +635,14 @@
                                 style="background:var(--bg-input);border:1px solid var(--border);color:var(--text-1)">
                         </div>
 
+                        <button id="btn-low-conf-filter" onclick="toggleLowConfidenceFilter()"
+                            class="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 text-xs rounded-xl transition-all"
+                            style="background:var(--bg-input);border:1px solid var(--border);color:var(--warn);font-size:11px"
+                            title="Show only files with low-confidence pages">
+                            <span>⚠</span>
+                            <span>Low Confidence Only</span>
+                        </button>
+
                         <div id="file-tree-container"
                             class="space-y-3 mono text-xs select-none overflow-y-auto overflow-x-hidden overscroll-contain max-h-[350px] pr-1">
                             <div class="flex items-center gap-2 mb-1" style="color:var(--text-2)">

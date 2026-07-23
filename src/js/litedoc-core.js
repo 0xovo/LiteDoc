@@ -1664,6 +1664,14 @@ var LiteDocCore = (function () {
                 // data the markdown is generated FROM, exposed for --json consumers
                 // instead of being thrown away at serialization.
                 const docLayout = [];
+                // Source map: each block maps to { page, md_range: [start,end],
+                // bbox: {x0,y0,x1,y1}, type, confidence } so every Markdown
+                // fragment points back to its origin. Written as a sidecar by
+                // --source-map; always included in --json.
+                const sourceMap = [];
+                // Low-confidence pages: pages where garbage ratio is high or
+                // all content came from OCR — useful for RAG auditability.
+                const lowConfidencePages = [];
                 const pageInlineRenders = {};
                 const sharedCanvas = document.createElement('canvas');
                 const sharedCtx = sharedCanvas.getContext('2d', { willReadFrequently: true });
@@ -2046,11 +2054,70 @@ var LiteDocCore = (function () {
                             bodyBlocks[idx].push(lg);
                         }
                         const blockKeys = Object.keys(bodyBlocks).map(k => parseInt(k)).sort((a, b) => a - b);
-                        for (const k of blockKeys) pageMdLines.push(...linesToMd(bodyBlocks[k]));
+
+                        // ── Source-map: capture md output length before each block ──
+                        // so we know exact character offsets without calling linesToMd twice.
+                        const blockMdLens = []; // [linesBefore, linesAfter] for each block
+                        for (const k of blockKeys) {
+                            const before = pageMdLines.length;
+                            pageMdLines.push(...linesToMd(bodyBlocks[k]));
+                            blockMdLens.push([before, pageMdLines.length]);
+                        }
 
                         let pageMd = pageMdLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
                         if (enhancedMd && enhancedMd.trim()) {
                             pageMd = (pageMd + '\n\n' + enhancedMd.trim()).trim().replace(/\n{3,}/g, '\n\n');
+                        }
+
+                        // Build source map entries from the captured line ranges
+                        for (let bi = 0; bi < blockKeys.length; bi++) {
+                            const k = blockKeys[bi];
+                            const blockLines = bodyBlocks[k];
+                            const [lineStart, lineEnd] = blockMdLens[bi];
+                            if (lineEnd <= lineStart) continue; // empty block
+
+                            const blockLinesArr = pageMdLines.slice(lineStart, lineEnd);
+                            const blockStr = blockLinesArr.join('\n').trim();
+                            if (!blockStr) continue;
+
+                            // Find block text position within pageMd
+                            const blockStart = pageMd.indexOf(blockStr);
+                            const blockLen = blockStr.length;
+                            if (blockStart === -1) continue;
+
+                            // Aggregate bbox from line group items
+                            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                            let anyOcr = false;
+                            let anyTable = false;
+                            for (const lg of blockLines) {
+                                for (const it of (lg.items || [])) {
+                                    if (it.x < minX) minX = it.x;
+                                    if (it.y < minY) minY = it.y;
+                                    if ((it.x + (it.width || 0)) > maxX) maxX = it.x + (it.width || 0);
+                                    if ((it.y + (it.height || 0)) > maxY) maxY = it.y + (it.height || 0);
+                                    if (it.isOcr) anyOcr = true;
+                                }
+                                if (lg.isTable) anyTable = true;
+                            }
+
+                            // Determine type
+                            let type = 'paragraph';
+                            if (blockLines.length > 0) {
+                                const firstLine = blockLines[0];
+                                if (firstLine.items && firstLine.items.some(it => it.isBold)) {
+                                    type = 'heading';
+                                }
+                            }
+                            if (anyTable) type = 'table';
+
+                            const pageOffset = mdText.length;
+                            sourceMap.push({
+                                page: pageNum,
+                                md_range: [pageOffset + blockStart, pageOffset + blockStart + blockLen],
+                                bbox: { x0: minX === Infinity ? null : Math.round(minX), y0: minY === Infinity ? null : Math.round(minY), x1: maxX === -Infinity ? null : Math.round(maxX), y1: maxY === -Infinity ? null : Math.round(maxY) },
+                                type,
+                                confidence: anyOcr ? 'low' : 'high',
+                            });
                         }
                         
                         const showPageNums = typeof window !== 'undefined' && window.state ? !window.state.excludePageNumbers : true;
@@ -2059,7 +2126,18 @@ var LiteDocCore = (function () {
                         } else {
                             mdText += (pageNum > 1 ? '\n\n' : '') + pageMd;
                         }
-                        
+
+                        // ── Low-confidence detection: garbage ratio + all-OCR ──
+                        const lcTotalLines = activeLines.length;
+                        const garbageRatio = lcTotalLines > 0 ? garbageLines / lcTotalLines : 0;
+                        const allOcr = lcTotalLines > 0 && activeLines.every(l => l.items && l.items.some(it => it.isOcr));
+                        if (garbageRatio > activeConfig$1.pageGarbageRatioThreshold || allOcr) {
+                            const reasons = [];
+                            if (garbageRatio > activeConfig$1.pageGarbageRatioThreshold) reasons.push(`high garbage ratio: ${(garbageRatio * 100).toFixed(1)}%`);
+                            if (allOcr) reasons.push('all content from OCR');
+                            lowConfidencePages.push({ page: pageNum, confidence: allOcr ? 'low' : 'medium', reasons });
+                        }
+
                         page.cleanup();
                         } catch (e) {
                             console.error(`[Core Error] Page ${pageNum} processing failed:`, e);
@@ -2071,7 +2149,7 @@ var LiteDocCore = (function () {
                     await processChunk(chunkStart, Math.min(chunkStart + CHUNK_SIZE - 1, pdfDoc.numPages));
                 }
                 await pdfDoc.destroy();
-                state.processedData.push({ filename: file.name, status: 'success', mdText, extractedImages, inlineRenders: pageInlineRenders, numPages: pdfDoc.numPages, layout: docLayout });
+                state.processedData.push({ filename: file.name, status: 'success', mdText, extractedImages, inlineRenders: pageInlineRenders, numPages: pdfDoc.numPages, layout: docLayout, sourceMap, lowConfidencePages });
             } catch (err) { logToTerminal(`Failed: ${file.name}`, 'error'); }
         }
         updateProgress(100, 'Complete', '');

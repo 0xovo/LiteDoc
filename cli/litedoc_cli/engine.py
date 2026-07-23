@@ -61,7 +61,9 @@ class Engine:
             self._pw.stop()
 
     def convert(self, pdf_bytes: bytes, name: str) -> dict:
-        """Returns {"markdown": str, "num_pages": int, "images": [names]}."""
+        """Returns {"markdown": str, "num_pages": int, "images": [names],
+                    "layout": [...], "source_map": [...], "low_confidence_pages": [...]}.
+        """
         self._page.evaluate(
             """([ocr, lang]) => {
                 if (window.__litedocAddons && window.__litedocAddons._settings) {
@@ -93,6 +95,8 @@ class Engine:
                         data_url: i.dataUrl || null,
                     })),
                     layout: d.layout || [],
+                    source_map: d.sourceMap || [],
+                    low_confidence_pages: d.lowConfidencePages || [],
                 };
             }""",
             [b64, name],

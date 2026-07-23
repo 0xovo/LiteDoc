@@ -595,7 +595,8 @@
     }
 
     .error-badge,
-    .skipped-badge {
+    .skipped-badge,
+    .low-conf-badge {
         margin-left: 0 !important;
         font-size: 9px !important;
         padding: 2px 6px !important;

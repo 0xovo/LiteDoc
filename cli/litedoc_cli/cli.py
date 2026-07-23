@@ -38,6 +38,18 @@ def _write_images(result, images_dir: Path, md_dir: Path, log) -> None:
     result["markdown"] = md
 
 
+def _write_source_map(result: dict, target: Path, log) -> None:
+    """Write a <name>.source-map.json sidecar with provenance for every block."""
+    sm = {
+        "source_map": result.get("source_map", []),
+        "low_confidence_pages": result.get("low_confidence_pages", []),
+        "file": result.get("file", ""),
+    }
+    target.write_text(json.dumps(sm, indent=2, ensure_ascii=False), encoding="utf-8")
+    log(f"wrote {target}")
+    result["_source_map_written"] = str(target)
+
+
 def _log_factory(quiet: bool):
     def log(msg):
         if not quiet:
@@ -115,6 +127,21 @@ def cmd_convert(args) -> int:
             _write_images(result, Path(args.images) if args.images else None, md_dir, log)
             md = result["markdown"]
 
+            # ── Source-map sidecar ──
+            if args.source_map and out_dir is None and out_file is not None:
+                sm_path = out_file.with_suffix(".source-map.json")
+                _write_source_map(result, sm_path, log)
+            elif args.source_map and out_dir is not None:
+                sm_path = out_dir / (Path(display).stem + ".source-map.json")
+                _write_source_map(result, sm_path, log)
+            elif args.source_map and len(inputs) > 1 and path:
+                sm_path = path.with_suffix(".source-map.json")
+                _write_source_map(result, sm_path, log)
+            elif args.source_map and out_file is None:
+                # stdout mode: emit sidecar to current dir
+                sm_path = Path(display).with_suffix(".source-map.json")
+                _write_source_map(result, sm_path, log)
+
             if args.json:
                 results.append(result)
             elif out_dir is not None:
@@ -159,6 +186,9 @@ def main(argv=None) -> None:
                       help="Emit a JSON envelope (markdown + page count + structured layout + images)")
     conv.add_argument("--images", metavar="DIR",
                       help="Write extracted figures as JPEGs into DIR and link them from the markdown")
+    conv.add_argument("--source-map", action="store_true",
+                      help="Write a <name>.source-map.json sidecar with per-block provenance"
+                           " (page, bbox, confidence) so every Markdown fragment traces to its source")
     conv.add_argument("--quiet", action="store_true", help="Suppress progress messages")
 
     ai = conv.add_argument_group("optional AI repair (triage-first: only damaged sections are sent)")

@@ -15,6 +15,7 @@ window.state = {
     hasUnsavedChanges: false,
     isEditing: false,
     isSkippingFile: false,
+    showLowConfidenceOnly: false, // Explorer filter: show only files with low-confidence pages
 };
 
 window.skipCurrentFile = function () {

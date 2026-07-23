@@ -30,6 +30,10 @@ function resetTool(force = false) {
         document.getElementById('file-input').value = '';
         const searchInput = document.getElementById('file-tree-search');
         if (searchInput) { searchInput.value = ''; window.filterFileTree(''); }
+        // reset low-conf filter
+        state.showLowConfidenceOnly = false;
+        const lowConfBtn = document.getElementById('btn-low-conf-filter');
+        if (lowConfBtn) lowConfBtn.classList.remove('low-conf-active');
         d.scrollIntoView({ behavior: 'smooth' });
 }
 

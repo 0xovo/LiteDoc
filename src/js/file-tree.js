@@ -9,6 +9,8 @@
             const isFailed = dataBlock.status === 'failed';
             const mdFilename = dataBlock.filename.replace('.pdf', '') + (isFailed ? '' : '.md');
             const folderName = `_pdf_images_${dataBlock.filename}`;
+            const lowConfPages = dataBlock.lowConfidencePages || [];
+            const hasLowConf = lowConfPages.length > 0;
 
             // md node
             const mdNode = document.createElement('div');
@@ -16,15 +18,21 @@
             mdNode.className = 'file-node';
             mdNode.setAttribute('tabindex', '0');
             mdNode.setAttribute('onclick', `selectVirtualFile(${fIndex}, 'md')`);
-            
+
             const iconColor = isFailed ? 'var(--danger)' : 'var(--accent)';
-            const badge = isFailed ? '<span class="error-badge">Error</span>' : '';
+            const errorBadge = isFailed ? '<span class="error-badge">Error</span>' : '';
+            const confBadge = hasLowConf
+                ? `<span class="low-conf-badge" title="${lowConfPages.map(p => `Page ${p.page}: ${p.reasons.join(', ')}`).join(' | ')}">
+                     ⚠ ${lowConfPages.length} low-confidence page${lowConfPages.length > 1 ? 's' : ''}
+                   </span>`
+                : '';
 
             mdNode.innerHTML = `
                 <div class="flex items-center gap-2 min-w-0 w-full">
                     <svg class="w-4 h-4 shrink-0" style="color:${iconColor}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2-0 01-2-2V5a2 2-0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
                     <span class="truncate">${mdFilename}</span>
-                    ${badge}
+                    ${errorBadge}
+                    ${confBadge}
                 </div>`;
             fileGroup.appendChild(mdNode);
 
@@ -238,16 +246,24 @@
         function filterFileTree(query) {
             const q = query.toLowerCase();
             const groups = document.querySelectorAll('.tree-group');
+            const lowConfOnly = state.showLowConfidenceOnly;
 
             groups.forEach(group => {
-                let groupHasMatch = false;
+                let groupVisible = false;
+
+                // check if this file has low confidence pages
+                const mdNode = group.querySelector('.file-node[id^="file-node-md"]');
+                const fIndex = mdNode ? parseInt(mdNode.getAttribute('onclick').match(/\d+/)[0]) : -1;
+                const dataBlock = state.processedData[fIndex];
+                const hasLowConf = dataBlock && (dataBlock.lowConfidencePages || []).length > 0;
+                const showByConf = !lowConfOnly || hasLowConf;
 
                 // filter md node
-                const mdNode = group.querySelector('.file-node[id^="file-node-md"]');
                 if (mdNode) {
-                    const mdMatch = mdNode.textContent.toLowerCase().includes(q);
-                    mdNode.style.display = mdMatch ? '' : 'none';
-                    if (mdMatch) groupHasMatch = true;
+                    const mdMatch = q === '' || mdNode.textContent.toLowerCase().includes(q);
+                    const show = mdMatch && showByConf;
+                    mdNode.style.display = show ? '' : 'none';
+                    if (show) groupVisible = true;
                 }
 
                 // filter image nodes
@@ -258,26 +274,35 @@
                 if (imgList) {
                     const imgNodes = imgList.querySelectorAll('.file-node');
                     imgNodes.forEach(node => {
-                        const match = node.textContent.toLowerCase().includes(q);
-                        node.style.display = match ? '' : 'none';
-                        if (match) imgMatchCount++;
+                        const match = q === '' || node.textContent.toLowerCase().includes(q);
+                        node.style.display = match && showByConf ? '' : 'none';
+                        if (match && showByConf) imgMatchCount++;
                     });
                 }
 
                 // hide/show folder container appropriately
                 if (folderNode && imgList) {
-                    if (q === '') {
-                        folderNode.style.display = '';
-                        imgList.style.display = '';
+                    if (q === '' && !lowConfOnly) {
+                        folderNode.style.display = imgMatchCount > 0 || showByConf ? '' : 'none';
+                        imgList.style.display = imgMatchCount > 0 || showByConf ? '' : 'none';
                     } else {
                         folderNode.style.display = imgMatchCount > 0 ? '' : 'none';
                         imgList.style.display = imgMatchCount > 0 ? '' : 'none';
                     }
                 }
 
-                if (imgMatchCount > 0) groupHasMatch = true;
-                group.style.display = groupHasMatch ? '' : 'none';
+                if (imgMatchCount > 0) groupVisible = true;
+                group.style.display = groupVisible ? '' : 'none';
             });
+        }
+
+        function toggleLowConfidenceFilter() {
+            state.showLowConfidenceOnly = !state.showLowConfidenceOnly;
+            const btn = document.getElementById('btn-low-conf-filter');
+            if (btn) {
+                btn.classList.toggle('low-conf-active', state.showLowConfidenceOnly);
+            }
+            filterFileTree(document.getElementById('file-tree-search')?.value || '');
         }
 
 function finishProcessing() {
@@ -301,5 +326,6 @@ window.renderFileToTree = renderFileToTree;
 window.updateSavingsUI = updateSavingsUI;
 window.selectVirtualFile = selectVirtualFile;
 window.filterFileTree = filterFileTree;
+window.toggleLowConfidenceFilter = toggleLowConfidenceFilter;
 window.finishProcessing = finishProcessing;
 
