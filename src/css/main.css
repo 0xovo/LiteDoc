@@ -2,10 +2,10 @@
 
 
 :root {
-    --bg-base: #06070a;
-    --bg-card: #0b0d14;
-    --bg-input: #10121b;
-    --bg-dark: #040507;
+    --bg-base: #0b0d14;
+    --bg-card: #11141f;
+    --bg-input: #171b28;
+    --bg-dark: #0a0c13;
     --border: rgba(255, 255, 255, 0.08);
     --border-hi: rgba(99, 102, 241, 0.3);
     --text-1: #f1f5f9;
@@ -26,26 +26,84 @@
 }
 
 [data-theme="light"] {
-    --bg-base: #f4f6fc;
-    --bg-card: #ffffff;
-    --bg-input: #f0f2f9;
-    --bg-dark: #e8eaf4;
-    --border: rgba(100, 116, 139, 0.15);
-    --border-hi: rgba(99, 102, 241, 0.35);
-    --text-1: #0f172a;
-    --text-2: #475569;
-    --text-3: #94a3b8;
+    --bg-base: #ebeeea;
+    --bg-card: #f8f9fc;
+    --bg-input: #e3e6f0;
+    --bg-dark: #dde1ec;
+    --border: rgba(15, 23, 42, 0.16);
+    --border-hi: rgba(79, 70, 229, 0.45);
+    --text-1: #060810;
+    --text-2: #1e293b;
+    --text-3: #334155;
     --accent: #4f46e5;
-    --accent-hi: #6366f1;
-    --accent-low: rgba(99, 102, 241, 0.08);
-    --shadow-acc: rgba(99, 102, 241, 0.15);
+    --accent-hi: #4338ca;
+    --accent-low: rgba(79, 70, 229, 0.12);
+    --shadow-acc: rgba(79, 70, 229, 0.18);
     --success: #059669;
     --warn: #d97706;
     --danger: #e11d48;
-    --selection-bg: rgba(99, 102, 241, 0.15);
-    --selection-fg: #3730a3;
+    --selection-bg: rgba(79, 70, 229, 0.18);
+    --selection-fg: #1e1b4b;
     --editor-btn-h: 34px;
     --editor-toolbar-h: 52px;
+}
+
+/* Enhanced High-Contrast Light Mode Overrides */
+[data-theme="light"] body {
+    background-color: #f1f3f9 !important;
+    color: var(--text-1);
+}
+[data-theme="light"] .text-slate-400,
+[data-theme="light"] .text-slate-300,
+[data-theme="light"] .text-slate-500,
+[data-theme="light"] .text-gray-400,
+[data-theme="light"] .text-gray-300,
+[data-theme="light"] .text-gray-500,
+[data-theme="light"] .text-zinc-400,
+[data-theme="light"] .text-zinc-300 {
+    color: var(--text-2) !important;
+}
+[data-theme="light"] .text-indigo-400,
+[data-theme="light"] .text-indigo-300 {
+    color: var(--accent) !important;
+}
+[data-theme="light"] .text-emerald-400 {
+    color: var(--success) !important;
+}
+[data-theme="light"] .text-amber-400 {
+    color: var(--warn) !important;
+}
+[data-theme="light"] .text-rose-400 {
+    color: var(--danger) !important;
+}
+[data-theme="light"] .border-slate-700,
+[data-theme="light"] .border-slate-800,
+[data-theme="light"] .border-slate-700\/50,
+[data-theme="light"] .border-gray-800,
+[data-theme="light"] .border-gray-700 {
+    border-color: var(--border) !important;
+}
+[data-theme="light"] .bg-slate-800,
+[data-theme="light"] .bg-slate-800\/50,
+[data-theme="light"] .bg-slate-900,
+[data-theme="light"] .bg-slate-900\/50 {
+    background-color: var(--bg-input) !important;
+    color: var(--text-1) !important;
+}
+[data-theme="light"] #viewer-md-container,
+[data-theme="light"] #viewer-md-rendered,
+[data-theme="light"] #split-rendered-left,
+[data-theme="light"] #split-raw-right,
+[data-theme="light"] #raw-markdown-block {
+    background: #ffffff;
+    color: #0d1117;
+    border: 1px solid rgba(15, 23, 42, 0.2);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+[data-theme="light"] #donation-toast {
+    background: #ffffff !important;
+    border: 1px solid rgba(15, 23, 42, 0.2);
+    box-shadow: 0 10px 35px rgba(0, 0, 0, 0.12) !important;
 }
 
 /* base styles */
@@ -250,7 +308,22 @@ body {
     border: 1px solid rgba(245, 158, 11, 0.2);
     margin-left: 6px;
     flex-shrink: 0;
-    cursor: help;
+    cursor: pointer;
+}
+
+/* Ace Editor Low-Confidence Highlight (text marker) */
+.ace_low_conf_highlight {
+    position: absolute;
+    background: rgba(245, 158, 11, 0.2);
+    pointer-events: none;
+}
+
+/* Raw text view low-conf highlight */
+.low-conf-page-block {
+    background: rgba(255, 200, 50, 0.35);
+    border-left: 3px solid rgba(255, 200, 50, 0.9);
+    padding: 2px 6px;
+    border-radius: 2px;
 }
 
 /* Low Confidence Filter Active */
@@ -468,19 +541,58 @@ nav > div {
     flex-direction: row !important;
 }
 
+/* Ensure active single-view elements fill vertical space in column mode */
+#viewer-card.fixed #viewer-content-wrapper:not(.flex-row) > #raw-markdown-block,
+#viewer-card.fixed #viewer-content-wrapper:not(.flex-row) > #viewer-md-rendered,
+#viewer-card.fixed #viewer-content-wrapper:not(.flex-row) > #viewer-md-container,
+#viewer-card.fixed #viewer-content-wrapper:not(.flex-row) > #viewer-pdf-container,
+#viewer-card.fixed #viewer-content-wrapper:not(.flex-row) > #split-rendered-left,
+#viewer-card.fixed #viewer-content-wrapper:not(.flex-row) > #split-raw-right,
+#viewer-card.fixed #viewer-content-wrapper:not(.flex-row) > #split-pdf-left,
+#viewer-card.fixed #viewer-content-wrapper:not(.flex-row) > #split-pdf-right {
+    flex-grow: 1 !important;
+}
+
+/* Ensure full height and removes height constraints without overriding horizontal flex ratios in split mode */
 #viewer-card.fixed #raw-markdown-block,
 #viewer-card.fixed #viewer-md-rendered,
-#viewer-card.fixed #viewer-md-container {
-    flex-grow: 1 !important;
+#viewer-card.fixed #viewer-md-container,
+#viewer-card.fixed #viewer-pdf-container,
+#viewer-card.fixed #split-rendered-left,
+#viewer-card.fixed #split-raw-right,
+#viewer-card.fixed #split-pdf-left,
+#viewer-card.fixed #split-pdf-right {
     height: 100% !important;
     max-height: none !important;
-    min-height: 0 !important; /* Allow flex to shrink the editor safely when zoomed in */
+    min-height: 0 !important;
     margin-bottom: 0 !important;
 }
 
+/* Explicitly enforce structural left-to-right order in split mode to prevent panel flipping */
+#viewer-content-wrapper.flex-row > #viewer-md-container,
+#viewer-content-wrapper.flex-row > #split-rendered-left,
+#viewer-content-wrapper.flex-row > #split-pdf-left,
+#viewer-content-wrapper.flex-row > #raw-markdown-block {
+    order: 1 !important;
+}
+#viewer-content-wrapper.flex-row > #split-resizer {
+    order: 2 !important;
+}
+#viewer-content-wrapper.flex-row > #split-raw-right,
+#viewer-content-wrapper.flex-row > #viewer-md-rendered,
+#viewer-content-wrapper.flex-row > #split-pdf-right {
+    order: 3 !important;
+}
+
 /* Force hide everything else when fullscreen */
+body:has(#viewer-card.fixed) {
+    overflow: hidden !important;
+}
 body:has(#viewer-card.fixed) nav,
-body:has(#viewer-card.fixed) footer {
+body:has(#viewer-card.fixed) footer,
+body:has(#viewer-card.fixed) #hero-banner,
+body:has(#viewer-card.fixed) #drop-zone,
+body:has(#viewer-card.fixed) .grid > :not(#viewer-card) {
     display: none !important;
 }
 
@@ -648,6 +760,51 @@ body:has(#viewer-card.fixed) footer {
     line-height: 1.7;
     white-space: pre-wrap;
     overflow-y: auto;
+    flex: 1 1 0%;
+    min-width: 0;
+    min-height: 0;
+}
+
+#split-rendered-left {
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    color: var(--text-1);
+    line-height: 1.8;
+    overflow-y: auto;
+    font-size: 13px;
+    flex: 1 1 0%;
+    min-width: 0;
+    min-height: 0;
+}
+
+#split-raw-right {
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-2);
+    line-height: 1.7;
+    white-space: pre-wrap;
+    overflow-y: auto;
+    flex: 1 1 0%;
+    min-width: 0;
+    min-height: 0;
+}
+
+#viewer-pdf-container,
+#split-pdf-left,
+#split-pdf-right {
+    background: #ffffff !important;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    flex: 1 1 0%;
+    min-width: 0;
+    min-height: 0;
 }
 
 /* raw md */
@@ -655,8 +812,8 @@ body:has(#viewer-card.fixed) footer {
     position: relative;
     border: 1px solid var(--border);
     border-radius: 12px;
-    flex: 1;
-    width: 100%;
+    flex: 1 1 0%;
+    min-width: 0;
     overflow: hidden;
     min-height: 0;
 }
@@ -693,6 +850,7 @@ details.faq-card summary {
     list-style: none;
 }
 
+details.faq-card summary::-webkit-details-marker {
     display: none;
 }
 
@@ -1117,6 +1275,9 @@ footer {
     line-height: 1.8;
     overflow-y: auto;
     font-size: 13px;
+    flex: 1 1 0%;
+    min-width: 0;
+    min-height: 0;
 }
 
 #viewer-md-rendered h1,
@@ -1171,6 +1332,125 @@ h3 {
     background: #2a2a2a;
     color: #fff;
     box-shadow: none;
+}
+
+/* Split panel controls bar */
+#split-panel-controls {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    flex-shrink: 0;
+    background: transparent;
+    border: none;
+    padding: 6px 0 8px 0;
+    gap: 6px;
+}
+#split-panel-controls.hidden {
+    display: none !important;
+}
+
+/* Split panel sides: one on the left, one on the right */
+.split-panel-side {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 0;
+}
+.split-panel-side:nth-child(2) {
+    border-left: none;
+    padding-left: 0;
+}
+
+/* Custom Split Multi-Selector CSS */
+.split-custom-select {
+    min-width: 220px;
+    position: relative;
+    user-select: none;
+}
+.split-custom-select .ld-select-display {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-1);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    cursor: pointer;
+}
+.split-custom-select .ld-select-display:hover {
+    border-color: var(--accent);
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.18);
+    background: var(--bg-hover, #1e2230);
+}
+.split-custom-select.open .ld-select-display {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
+}
+.split-custom-select .ld-select-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: auto;
+    min-width: 230px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 6px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5), 0 0 1px 1px rgba(255, 255, 255, 0.05);
+    z-index: 9000;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-4px);
+    transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s ease;
+}
+.split-custom-select.open .ld-select-dropdown {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+.split-custom-select .ld-select-option {
+    font-size: 12px;
+    font-weight: 500;
+    padding: 8px 12px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    color: var(--text-2);
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+.split-custom-select .ld-select-option:hover {
+    background: var(--bg-hover);
+    color: var(--text-1);
+    transform: translateX(3px);
+}
+.split-custom-select .ld-select-option.selected {
+    background: rgba(99, 102, 241, 0.15);
+    color: var(--accent);
+    font-weight: 600;
+}
+.split-custom-select .ld-select-option.selected:hover {
+    background: rgba(99, 102, 241, 0.22);
+}
+
+select option {
+    background-color: var(--bg-dark, #0f111a);
+    color: var(--text-1, #f0f2f9);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 8px 12px;
 }
 
 /* utility icon group — tight, muted */
@@ -1430,6 +1710,7 @@ h3 {
     /* keep scroll regions usable */
     #viewer-md-container,
     #viewer-md-rendered,
+    #viewer-pdf-container,
     #raw-markdown-block {
         -webkit-overflow-scrolling: touch;
         overscroll-behavior: contain;

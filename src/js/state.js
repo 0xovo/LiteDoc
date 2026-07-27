@@ -11,6 +11,8 @@ window.state = {
     excludePageNumbers: false,
     currentImageIndex: null,
     splitRatio: 50,
+    splitLeftElId: 'viewer-md-container',
+    splitRightElId: 'viewer-md-rendered',
     pendingFiles: [],
     hasUnsavedChanges: false,
     isEditing: false,

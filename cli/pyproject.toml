@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "litedoc-cli"
-version = "3.1.0"
+version = "3.2.0"
 description = "LiteDoc in your terminal: deterministic PDF → Markdown with an optional bring-your-own-AI repair pass. Same engine as litedoc.xyz."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "AGPL-3.0" }
+license = "AGPL-3.0"
 dependencies = [
     "playwright>=1.40",
     "httpx>=0.25",
@@ -18,7 +18,7 @@ dependencies = [
 litedoc = "litedoc_cli.cli:main"
 
 [tool.setuptools]
-packages = ["litedoc_cli"]
+packages = ["litedoc_cli", "litedoc_cli.app"]
 
 [tool.setuptools.package-data]
 litedoc_cli = ["app/index.html"]

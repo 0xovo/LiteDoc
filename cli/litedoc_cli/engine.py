@@ -34,7 +34,7 @@ def find_app_html() -> str:
 class Engine:
     """One headless browser reused across a whole batch."""
 
-    def __init__(self, ocr: bool = False, lang: str = "auto", quiet: bool = True):
+    def __init__(self, ocr: bool = False, lang: str = "auto", quiet: bool = True, img_res: str = "300", auto_resolve: str = "clean", verbose: bool = False):
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
@@ -42,6 +42,9 @@ class Engine:
         self._ocr = ocr
         self._lang = lang
         self._quiet = quiet
+        self._img_res = img_res
+        self._auto_resolve = auto_resolve
+        self._verbose = verbose
         self._pw = sync_playwright().start()
         try:
             self._browser = self._pw.chromium.launch(headless=True)
@@ -52,6 +55,8 @@ class Engine:
                 "Run once:  playwright install chromium"
             )
         self._page = self._browser.new_page()
+        if self._verbose:
+            self._page.on("console", lambda msg: print(f"engine: {msg.text}", file=sys.stderr))
         self._page.goto(f"file://{find_app_html()}", wait_until="load", timeout=60000)
 
     def close(self):
@@ -65,14 +70,16 @@ class Engine:
                     "layout": [...], "source_map": [...], "low_confidence_pages": [...]}.
         """
         self._page.evaluate(
-            """([ocr, lang]) => {
+            """([ocr, lang, imgRes, autoResolve]) => {
                 if (window.__litedocAddons && window.__litedocAddons._settings) {
                     window.__litedocAddons._settings.ocrEnabled = ocr;
                     window.__litedocAddons._settings.ocrLang = lang;
                 }
+                if (typeof window.setImgRes === 'function') window.setImgRes(parseInt(imgRes));
+                if (typeof window.setAutoResolveAction === 'function') window.setAutoResolveAction(autoResolve);
                 if (typeof window.resetTool === 'function') window.resetTool(true);
             }""",
-            [self._ocr, self._lang],
+            [self._ocr, self._lang, self._img_res, self._auto_resolve],
         )
         b64 = base64.b64encode(pdf_bytes).decode()
         result = self._page.evaluate(

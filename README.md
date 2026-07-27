@@ -15,7 +15,7 @@
 
 ## Project Status
 
-LiteDoc is **stable and in maintenance mode.** v3.1.0 was the biggest release the project has had — the reconnected layout engine, real figure extraction, the CLI, and a continuous training pipeline all landed in one update — and it's a good place for the core engine to sit for a while. From here, updates will be bug fixes and small improvements as they come in rather than a fixed roadmap of new features.
+LiteDoc is **actively developed.** v3.2.0 is a major release — the CLI got enterprise automation (live folder watchers, page slicing, performance benchmarking, persistent config), the GUI got source-map provenance tracking, low-confidence OCR auditing, and split view panel selectors. The core extraction engine continues to improve with better scoring and bug fixes.
 
 The optional AI cleanup feature is temporarily offline — the cloud account hosting it was suspended with no explanation and an open-ended appeal process (see `RELEASE_NOTES.md` for the full story). This doesn't affect the core app: extraction has always run 100% in your browser, and the CLI works fully offline too. AI cleanup comes back the moment there's somewhere to host it again.
 
@@ -84,6 +84,8 @@ No dependencies, no server uploads, no privacy concerns. It runs entirely on you
 | **Math Rendering** | Detects formula bounding boxes (including PUA-encoded symbols) and preserves them as high-fidelity images or KaTeX. |
 | **Figure & Chart Extraction** | Vector graphics (charts, diagrams, plots) are detected from the PDF's drawing operators, cropped **with their axis labels and annotations included**, and placed above their captions in the output — instead of leaking stray label text into your prose. |
 | **Gibberish Detection** | Statistical scoring identifies corrupted custom-encoded fonts and routes them to OCR fallback. |
+| **Source-Map Provenance** | Per-block traceability from markdown output back to source PDF page, character offsets, and bounding box. Available in the GUI explorer and as a `--source-map` CLI sidecar for RAG pipeline auditing. |
+| **Low-Confidence Auditing** | Automatic detection of pages with suspect OCR quality. GUI shows ⚠ badges with expandable per-page reasons; click to highlight affected blocks in raw and rendered views. |
 
 ### Privacy & Performance
 
@@ -113,19 +115,26 @@ LiteDoc now ships an opt-in **"Clean with AI"** feature: after the local parser 
 
 ## The CLI
 
-The full extraction engine is also available as a command-line tool for scripts and pipelines — identical output to the web app, because it drives the exact same engine headlessly:
+The full extraction engine is also available as a command-line tool for scripts, RAG ingestion pipelines, and folder automation — identical output to the web app, because it drives the exact same engine headlessly:
 
 ```bash
 pip install litedoc-cli
 playwright install chromium        # one-time engine download
 
 litedoc convert paper.pdf                                # markdown to stdout
-litedoc convert scans/*.pdf -o out/ --ocr                # batch + OCR
-litedoc convert paper.pdf -o out/ --images out/images    # extracted figures as JPEGs
-litedoc convert scan.pdf --ai-url http://localhost:11434 # repair with YOUR model
+litedoc convert paper.pdf -o out/ --images out/images    # extract figures as JPEGs
+litedoc convert textbook.pdf --pages "1-5,10" -o out/    # extract targeted page ranges
+litedoc convert scans/*.pdf -o out/ --img-res 600 --ocr  # batch conversion with 600 DPI figure extraction
+litedoc convert batch/*.pdf --auto-resolve clean         # unattended batch with conflict handling
+litedoc convert paper.pdf --source-map -o out/           # write source-map.json provenance sidecar
+litedoc convert ~/obsidian/inbox -o notes/ --watch --recursive  # live folder daemon for RAG dropzones
+litedoc convert massive.pdf --verbose                    # stream live diagnostic events
+litedoc benchmark --iterations 3                         # headless speed tests (spin-up, burst PPT & PPM)
+litedoc config --set img_res=600 auto_resolve=render     # persist custom default preferences globally
+litedoc convert scan.pdf --ai-url http://localhost:11434 # triage-first repair with YOUR model
 ```
 
-Deterministic by default (no AI, no network). The optional AI repair pass is **triage-first**: it detects the specific sections that are actually damaged — broken sentences, ragged tables, OCR artifacts — and sends *only those* to the model, never your whole document. Point it at your own Ollama/OpenAI-compatible endpoint with `--ai-url`, or at the hosted service with `--ai`. Full docs: [`cli/README.md`](cli/README.md).
+Deterministic by default (no AI, no network). The optional AI repair pass is **triage-first**: it detects the specific sections that are actually damaged — broken sentences, ragged tables, OCR artifacts — and sends *only those* to the model, never your whole document. Point it at your own Ollama/OpenAI-compatible endpoint with `--ai-url`, or at the hosted service with `--ai`. Full documentation: [`cli/README.md`](cli/README.md).
 
 ## Getting Started
 

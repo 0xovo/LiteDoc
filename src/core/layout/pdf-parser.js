@@ -536,6 +536,9 @@ export const executePdfConversion = async function (files) {
 
             const pdfDoc = pdf.pdf ? pdf.pdf : pdf;
             logToTerminal(`Recognized. Pages: ${pdfDoc.numPages}`);
+            if (typeof updateProgress === 'function') {
+                updateProgress(Math.round(baseProgress + fileProgressShare * 0.1), `Analyzing document layout (${pdfDoc.numPages} pages)...`, file.name);
+            }
 
             // OCR language: pass 'auto' straight through to the OCR queue.
             // It resolves the script PER PAGE (whole page → 2x → bands) and
@@ -624,6 +627,10 @@ export const executePdfConversion = async function (files) {
                 for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
                     if (state.isSkippingFile) throw new Error('SKIP_FILE');
                     await new Promise(r => setTimeout(r, 0));
+                    if (typeof updateProgress === 'function') {
+                        const pct = 0.15 + (0.8 * ((pageNum - 1) / (pdfDoc.numPages || 1)));
+                        updateProgress(Math.min(99, Math.max(10, Math.round(baseProgress + fileProgressShare * pct))), `Processing page ${pageNum} of ${pdfDoc.numPages}...`, file.name);
+                    }
 
                     try {
                     const page = await pdfDoc.getPage(pageNum);
@@ -671,6 +678,10 @@ export const executePdfConversion = async function (files) {
                     if (!items.length) {
                         if (addons.__litedocAddons.ocrEnabled()) {
                             logToTerminal(`[OCR] Page ${pageNum} seems to be a scan. Starting OCR...`, 'info');
+                            if (typeof updateProgress === 'function') {
+                                const pct = 0.15 + (0.8 * ((pageNum - 1) / (pdfDoc.numPages || 1)));
+                                updateProgress(Math.min(99, Math.round(baseProgress + fileProgressShare * pct)), `Running OCR on page ${pageNum} of ${pdfDoc.numPages}...`, file.name);
+                            }
                             const vp = page.getViewport({ scale: 2.0 });
                             const canv = document.createElement('canvas');
                             canv.width = vp.width; canv.height = vp.height;

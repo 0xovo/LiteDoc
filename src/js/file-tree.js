@@ -22,7 +22,7 @@
             const iconColor = isFailed ? 'var(--danger)' : 'var(--accent)';
             const errorBadge = isFailed ? '<span class="error-badge">Error</span>' : '';
             const confBadge = hasLowConf
-                ? `<span class="low-conf-badge" title="${lowConfPages.map(p => `Page ${p.page}: ${p.reasons.join(', ')}`).join(' | ')}">
+                ? `<span class="low-conf-badge" onclick="event.stopPropagation(); toggleLowConfPages(${fIndex})" title="Click to navigate to low-confidence pages">
                      ⚠ ${lowConfPages.length} low-confidence page${lowConfPages.length > 1 ? 's' : ''}
                    </span>`
                 : '';
@@ -35,6 +35,28 @@
                     ${confBadge}
                 </div>`;
             fileGroup.appendChild(mdNode);
+
+            // Low-confidence sub-nodes (expandable)
+            if (hasLowConf) {
+                const lcList = document.createElement('div');
+                lcList.id = `file-node-lc-list-${fIndex}`;
+                lcList.className = 'space-y-1 pl-6 pt-1 lc-list-node';
+                lcList.style.display = 'none'; // collapsed by default
+                lowConfPages.forEach((lc, i) => {
+                    const lcNode = document.createElement('div');
+                    lcNode.id = `file-node-lc-${fIndex}-${i}`;
+                    lcNode.className = 'file-node low-conf-page-node';
+                    lcNode.setAttribute('tabindex', '0');
+                    lcNode.setAttribute('onclick', `navigateToLowConfPage(${fIndex}, ${lc.page})`);
+                    lcNode.innerHTML = `
+                        <div class="flex items-center gap-1.5 min-w-0 w-full">
+                            <svg class="w-3.5 h-3.5 shrink-0" style="color:var(--warn)" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            <span class="truncate text-[10px]">Page ${lc.page} — ${lc.reasons.join(', ')}</span>
+                        </div>`;
+                    lcList.appendChild(lcNode);
+                });
+                fileGroup.appendChild(lcList);
+            }
 
             // images
             if (!isFailed && dataBlock.extractedImages.length > 0) {
@@ -219,6 +241,12 @@
                 if (resizer) resizer.classList.add('hidden');
                 viewerRendered.classList.add('hidden');
                 viewerRaw.classList.add('hidden');
+                const splitRenderedLeft = document.getElementById('split-rendered-left');
+                const splitRawRight = document.getElementById('split-raw-right');
+                if (splitRenderedLeft) splitRenderedLeft.classList.add('hidden');
+                if (splitRawRight) splitRawRight.classList.add('hidden');
+                const panelControls = document.getElementById('split-panel-controls');
+                if (panelControls) panelControls.classList.add('hidden');
 
                 viewerImg.classList.remove('order-first');
                 viewerImg.style.flex = ''; // Reset width sizing if it was adjusted
@@ -291,6 +319,20 @@
                     }
                 }
 
+                // filter low-confidence page list nodes
+                const lcList = group.querySelector('.lc-list-node');
+                if (lcList) {
+                    if (showByConf && hasLowConf) {
+                        lcList.style.display = lowConfOnly ? '' : 'none';
+                        lcList.querySelectorAll('.low-conf-page-node').forEach(node => {
+                            const match = q === '' || node.textContent.toLowerCase().includes(q);
+                            node.style.display = match ? '' : 'none';
+                        });
+                    } else {
+                        lcList.style.display = 'none';
+                    }
+                }
+
                 if (imgMatchCount > 0) groupVisible = true;
                 group.style.display = groupVisible ? '' : 'none';
             });
@@ -304,6 +346,220 @@
             }
             filterFileTree(document.getElementById('file-tree-search')?.value || '');
         }
+
+        // Expand/collapse low-confidence page list for a file
+        function toggleLowConfPages(fIndex) {
+            // First, make sure we're viewing the MD for this file
+            if (state.activeDataIndex !== fIndex) {
+                selectVirtualFile(fIndex, 'md');
+            }
+            const lcList = document.getElementById(`file-node-lc-list-${fIndex}`);
+            if (lcList) {
+                const isVisible = lcList.style.display !== 'none';
+                lcList.style.display = isVisible ? 'none' : '';
+            }
+        }
+
+        // Navigate editor to a specific low-confidence page
+        function navigateToLowConfPage(fIndex, pageNum) {
+            // Switch to this file's MD view if not already
+            if (state.activeDataIndex !== fIndex) {
+                selectVirtualFile(fIndex, 'md');
+            }
+            // Highlight the page node in the tree
+            document.querySelectorAll('.low-conf-page-node').forEach(n => n.classList.remove('active-md'));
+            const lcPages = state.processedData[fIndex]?.lowConfidencePages || [];
+            const pageIdx = lcPages.findIndex(p => p.page === pageNum);
+            const lcNode = document.getElementById(`file-node-lc-${fIndex}-${pageIdx >= 0 ? pageIdx : 0}`);
+            if (lcNode) lcNode.classList.add('active-md');
+
+            // Preserve user's current view mode; if in pdf or split mode, default to raw since markdown highlights are in text
+            if (typeof window.setViewMode === 'function') {
+                const curMode = state.currentViewMode || 'raw';
+                window.setViewMode((curMode === 'pdf' || curMode === 'split') ? 'raw' : curMode);
+            }
+
+            // Wait for the editor to be ready after switching files
+            setTimeout(() => {
+                if (typeof window.mdEditor === 'undefined' || !window.mdEditor) return;
+                if (typeof window.ace === 'undefined') return;
+
+                // Clear previous highlights
+                _clearLowConfHighlights();
+
+                const sourceMap = state.processedData[fIndex]?.sourceMap || [];
+                const lowConfBlocks = sourceMap.filter(b => b.page === pageNum && b.confidence === 'low');
+
+                if (lowConfBlocks.length === 0) {
+                    // Fallback: no source map blocks — just scroll to page heading
+                    const md = state.processedData[fIndex]?.mdText || '';
+                    const pageHeading = `## Page ${pageNum}`;
+                    const idx = md.indexOf(pageHeading);
+                    if (idx !== -1) {
+                        const lineNum = md.substring(0, idx).split('\n').length;
+                        window.mdEditor.gotoLine(lineNum, 0, true);
+                    }
+                    return;
+                }
+
+                // Add Ace highlight markers for each low-confidence block
+                const ranges = [];
+
+                lowConfBlocks.forEach((block, bi) => {
+                    const [start, end] = block.md_range;
+                    const md = state.processedData[fIndex]?.mdText || '';
+                    if (end > md.length) return;
+
+                    const startLine = md.substring(0, start).split('\n').length - 1;
+                    const startCol = Math.max(0, start - (md.lastIndexOf('\n', start - 1) + 1));
+                    const endLine = md.substring(0, end).split('\n').length - 1;
+                    const endCol = Math.max(0, end - (md.lastIndexOf('\n', end - 1) + 1));
+
+                    const aceRange = new window.ace.Range(startLine, startCol, endLine, endCol);
+                    ranges.push(aceRange);
+                });
+
+                ranges.forEach((range, i) => {
+                    window.mdEditor.session.addMarker(range, 'ace_low_conf_highlight', 'text', false);
+                });
+                // Scroll to the first highlighted block
+                const firstRange = ranges[0];
+                if (firstRange) {
+                    window.mdEditor.scrollToLine(firstRange.start.row, true);
+                    window.mdEditor.focus();
+                }
+
+                // Also highlight in the rendered preview AND raw text view
+                _highlightRenderedPage(pageNum);
+                _highlightRawView(fIndex, pageNum);
+            }, 150);
+        }
+
+        // Highlight low-confidence blocks in the raw text view (pre/code block)
+        // Only highlights specific low-confidence blocks — skips if all blocks are low-confidence
+        function _highlightRawView(fIndex, pageNum) {
+            const rawContainer = document.getElementById('viewer-md-container');
+            if (!rawContainer) return;
+
+            const sourceMap = state.processedData[fIndex]?.sourceMap || [];
+            const pageBlocks = sourceMap.filter(b => b.page === pageNum);
+            const lowConfBlocks = pageBlocks.filter(b => b.confidence === 'low');
+            if (lowConfBlocks.length === 0) return;
+            // Skip highlighting when all page blocks are low-confidence — badge already conveys this
+            if (pageBlocks.length > 0 && lowConfBlocks.length === pageBlocks.length) return;
+
+            const md = state.processedData[fIndex]?.mdText || '';
+
+            // Sort blocks by start position
+            lowConfBlocks.sort((a, b) => a.md_range[0] - b.md_range[0]);
+
+            // Build highlighted HTML: wrap each block's text in a <mark>
+            let result = '';
+            let pos = 0;
+            lowConfBlocks.forEach(block => {
+                const [start, end] = block.md_range;
+                // Add text before this block
+                result += escapeHtml(md.substring(pos, start));
+                // Add highlighted block
+                result += `<mark class="low-conf-page-block">${escapeHtml(md.substring(start, end))}</mark>`;
+                pos = end;
+            });
+            // Add remaining text after last block
+            result += escapeHtml(md.substring(pos));
+
+            rawContainer.innerHTML = result;
+        }
+
+        function escapeHtml(text) {
+            return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        // Highlight low-confidence page in the rendered markdown preview
+        function _highlightRenderedPage(pageNum) {
+            const rendered = document.getElementById('viewer-md-rendered');
+            if (!rendered) return;
+
+            // Clear previous highlights
+            rendered.querySelectorAll('.low-conf-page-highlight').forEach(el => {
+                el.style.borderLeft = '';
+                el.style.background = '';
+                el.classList.remove('low-conf-page-highlight');
+            });
+
+            // Find the h2 heading for this specific page number
+            const headings = rendered.querySelectorAll('h2');
+            let targetHeading = null;
+            let targetIndex = -1;
+
+            for (let i = 0; i < headings.length; i++) {
+                const h = headings[i];
+                const text = h.textContent.trim();
+                if (text === `Page ${pageNum}` || text.startsWith(`Page ${pageNum}`) && /^Page \d+/.test(text)) {
+                    targetHeading = h;
+                    targetIndex = i;
+                    break;
+                }
+            }
+
+            if (!targetHeading) return;
+
+            // Collect all elements from this heading to the next page heading
+            const elements = [];
+            let el = targetHeading;
+            while (el) {
+                elements.push(el);
+                // Stop at next page heading
+                const next = el.nextElementSibling;
+                if (next && (next.tagName === 'H1' || next.tagName === 'H2' || next.tagName === 'H3') && next.textContent.trim().includes('Page') && next !== targetHeading) {
+                    break;
+                }
+                el = next;
+            }
+
+            // Apply highlight
+            elements.forEach((elem, idx) => {
+                elem.style.borderLeft = '3px solid rgba(245, 158, 11, 0.8)';
+                elem.style.background = 'rgba(245, 158, 11, 0.12)';
+                elem.style.paddingLeft = '8px';
+                elem.classList.add('low-conf-page-highlight');
+            });
+
+            // Scroll to the heading
+            targetHeading.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        function _clearLowConfHighlights() {
+            // Clear Ace editor markers
+            if (typeof window.mdEditor !== 'undefined' && window.mdEditor && window.mdEditor.session) {
+                const markers = window.mdEditor.session.getMarkers();
+                Object.keys(markers).forEach(id => {
+                    if (markers[id].clazz === 'ace_low_conf_highlight') {
+                        window.mdEditor.session.removeMarker(markers[id].id);
+                    }
+                });
+            }
+            // Clear raw-view <mark> tags — reset to plain text
+            const rawContainer = document.getElementById('viewer-md-container');
+            if (rawContainer && state.activeDataIndex !== null) {
+                const data = state.processedData[state.activeDataIndex];
+                if (data) rawContainer.textContent = data.mdText || '';
+            }
+            // Clear rendered-view inline styles
+            document.querySelectorAll('.low-conf-page-highlight').forEach(el => {
+                el.style.borderLeft = '';
+                el.style.background = '';
+                el.style.paddingLeft = '';
+                el.classList.remove('low-conf-page-highlight');
+            });
+            // Clear split panel raw marks
+            const splitRaw = document.getElementById('split-raw-right');
+            if (splitRaw && state.activeDataIndex !== null) {
+                const data = state.processedData[state.activeDataIndex];
+                if (data) splitRaw.textContent = data.mdText || '';
+            }
+        }
+
+        window._clearLowConfHighlights = _clearLowConfHighlights;
 
 function finishProcessing() {
     window.showProgressState(false);
@@ -327,5 +583,7 @@ window.updateSavingsUI = updateSavingsUI;
 window.selectVirtualFile = selectVirtualFile;
 window.filterFileTree = filterFileTree;
 window.toggleLowConfidenceFilter = toggleLowConfidenceFilter;
+window.toggleLowConfPages = toggleLowConfPages;
+window.navigateToLowConfPage = navigateToLowConfPage;
 window.finishProcessing = finishProcessing;
 

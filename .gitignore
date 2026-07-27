@@ -1,0 +1,22 @@
+# Build output — ships via release artifacts only
+dist/index.html
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+cli/dist/
+
+# Build cache
+.build_cache/
+
+# Release artifacts (generated locally)
+litedoc-v*-release.zip
+litedoc-v*-release/
+dist-vercel/
+
+# OS
+.DS_Store
+
+# Graphify
+graphify-out/

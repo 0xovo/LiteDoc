@@ -147,6 +147,12 @@
             transition: border-color 0.2s, box-shadow 0.2s;
             gap: 12px;
         }
+        
+        .ld-select-value {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
 
         .ld-custom-select.open .ld-select-display,
         .ld-select-display:hover {
@@ -157,12 +163,13 @@
             box-shadow: 0 0 0 2px var(--accent-low);
         }
 
-        .ld-custom-select.open svg {
+        .ld-custom-select.open > .ld-select-display > svg {
             transform: rotate(180deg);
         }
 
-        .ld-select-display svg {
+        .ld-select-display > svg {
             transition: transform 0.2s;
+            flex-shrink: 0;
         }
 
         .ld-select-dropdown {
@@ -200,6 +207,9 @@
             transition: background 0.15s, color 0.15s;
             color: var(--text-2);
             white-space: nowrap;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
         .ld-select-option:hover {

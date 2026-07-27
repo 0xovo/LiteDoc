@@ -14,9 +14,17 @@
     let completedTasks = 0;
     let activeTasksProgress = new Map();
     let taskIdCounter = 0;
+    let ocrStatusMessage = 'Initializing Background OCR...';
 
     const taskDurations = [];
     const taskStartTimes = new Map();
+
+    function logToUI(msg, type = 'info') {
+        console.log(msg);
+        if (typeof window !== 'undefined' && typeof window.logToTerminal === 'function') {
+            window.logToTerminal(msg, type);
+        }
+    }
 
     async function terminateWorker(w) {
         if (w && w.worker) {
@@ -57,15 +65,35 @@
 
         try {
             await loadScriptOnce('js/tesseract.min.js');
+            logToUI('[Background OCR] Active WebAssembly OCR core loaded successfully.', 'success');
         } catch (e) {
             console.warn('[OCR] Local tesseract.min.js not found. Falling back to CDN...');
             await loadScriptOnce('vendor/tesseract.min.js');
+            logToUI('[Background OCR] Loaded Tesseract.js fallback engine from vendor CDN.', 'info');
         }
     }
 
     async function createFallbackWorker(lang, oem, loggerFn) {
         const options = {
-            logger: loggerFn
+            logger: (m) => {
+                if (m && m.status) {
+                    if (m.status === 'loading language training data' || m.status === 'loading tesseract core' || m.status === 'initializing tesseract' || m.status === 'initializing api') {
+                        const pctVal = (m.progress !== undefined && !isNaN(m.progress)) ? m.progress : 0;
+                        const pct = (pctVal > 0 && pctVal < 1) ? ` (${Math.round(pctVal * 100)}%)` : '';
+                        const action = m.status === 'loading language training data' ? `Downloading OCR model [${lang}]` : 'Initializing OCR core';
+                        ocrStatusMessage = `${action}${pct}...`;
+                        
+                        // Let model downloading and initialization count for up to 20% of task progress so bar moves immediately!
+                        if (activeTasksProgress.size > 0 && pctVal > 0) {
+                            for (const [tId, currVal] of activeTasksProgress.entries()) {
+                                if (currVal < 0.2) activeTasksProgress.set(tId, pctVal * 0.2);
+                            }
+                        }
+                        updateProgressUI();
+                    }
+                }
+                if (loggerFn) loggerFn(m);
+            }
         };
 
         if (window.__TESS_WORKER_URI) {
@@ -100,10 +128,13 @@
                 const oem = lang === 'equ' ? 0 : 1;
 
                 const worker = await createFallbackWorker(lang, oem, (m) => {
-                    if (m.status === 'recognizing text') {
+                    if (m && m.status === 'recognizing text') {
+                        const pctVal = m.progress || 0;
+                        ocrStatusMessage = `Recognizing text (${Math.round(pctVal * 100)}%)...`;
                         const poolEntry = workerPool.find(x => x.worker === worker);
                         if (poolEntry && poolEntry.activeTaskId) {
-                            activeTasksProgress.set(poolEntry.activeTaskId, m.progress);
+                            // Scale recognition from 20% to 100% so it resumes smoothly after initialization
+                            activeTasksProgress.set(poolEntry.activeTaskId, Math.min(1, 0.2 + (pctVal * 0.8)));
                             updateProgressUI();
                         }
                     }
@@ -155,30 +186,47 @@
             }
         }
 
-        container.innerHTML = `
-            <div class="flex items-center justify-between gap-4">
-                <div class="flex items-center gap-2">
-                    <div class="spinner-container !w-4 !h-4">
-                        <svg class="spinner-svg" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="6"></circle></svg>
+        let countsEl = document.getElementById('ocr-queue-counts');
+        let statusTextEl = document.getElementById('ocr-queue-status-text');
+        let etaTextEl = document.getElementById('ocr-queue-eta-text');
+        if (!countsEl || !statusTextEl || !etaTextEl) {
+            container.innerHTML = `
+                <div class="flex items-center justify-between gap-4">
+                    <div class="flex items-center gap-2">
+                        <div class="spinner-container !w-4 !h-4">
+                            <svg class="spinner-svg" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke-width="6"></circle></svg>
+                        </div>
+                        <span class="text-[11px] font-bold uppercase tracking-wider" style="color:var(--text-1)">Background OCR</span>
                     </div>
-                    <span class="text-[11px] font-bold uppercase tracking-wider" style="color:var(--text-1)">Background OCR</span>
+                    <span id="ocr-queue-counts" class="text-[10px] font-mono" style="color:var(--accent)">${completedTasks}/${totalTasks}</span>
                 </div>
-                <span class="text-[10px] font-mono" style="color:var(--accent)">${completedTasks}/${totalTasks}</span>
-            </div>
-            <div class="h-1.5 w-full rounded-full overflow-hidden" style="background:var(--bg-input)">
-                <div id="ocr-queue-progress-bar" class="h-full transition-all duration-300" style="width:0%;background:var(--accent)"></div>
-            </div>
-            <div class="flex justify-between items-center mt-1">
-                <p class="text-[10px]" style="color:var(--text-3)">Processing textless pages...</p>
-                <p class="text-[10px] font-medium" style="color:var(--accent)">${etaText}</p>
-            </div>
-        `;
+                <div class="h-1.5 w-full rounded-full overflow-hidden my-1.5" style="background:var(--bg-input)">
+                    <div id="ocr-queue-progress-bar" class="h-full transition-all duration-300" style="width:0%;background:var(--accent)"></div>
+                </div>
+                <div class="flex justify-between items-center gap-2">
+                    <p id="ocr-queue-status-text" class="text-[10px] truncate max-w-[190px]" style="color:var(--text-3)">${ocrStatusMessage || 'Processing textless pages...'}</p>
+                    <p id="ocr-queue-eta-text" class="text-[10px] font-medium flex-shrink-0" style="color:var(--accent)">${etaText}</p>
+                </div>
+            `;
+        } else {
+            countsEl.textContent = `${completedTasks}/${totalTasks}`;
+            statusTextEl.textContent = ocrStatusMessage || 'Processing textless pages...';
+            etaTextEl.textContent = etaText;
+        }
 
         updateProgressUI();
     }
 
     function updateProgressUI() {
         const bar = document.getElementById('ocr-queue-progress-bar');
+        const statusEl = document.getElementById('ocr-queue-status-text');
+        const countsEl = document.getElementById('ocr-queue-counts');
+        if (statusEl && ocrStatusMessage) {
+            statusEl.textContent = ocrStatusMessage;
+        }
+        if (countsEl) {
+            countsEl.textContent = `${completedTasks}/${totalTasks}`;
+        }
         if (!bar || totalTasks === 0) return;
 
         let activeProgressSum = 0;
@@ -186,7 +234,7 @@
             activeProgressSum += p;
         }
 
-        const totalProgress = ((completedTasks + activeProgressSum) / totalTasks) * 100;
+        const totalProgress = Math.min(100, Math.max(0, ((completedTasks + activeProgressSum) / totalTasks) * 100));
         bar.style.width = `${totalProgress}%`;
     }
 
@@ -280,7 +328,7 @@
                     const validBlocks = (layoutBlocks || []).filter(b => b.bbox && (b.bbox.x1 - b.bbox.x0 > 50) && (b.bbox.y1 - b.bbox.y0 > 50));
                     
                     if (validBlocks.length > 1) {
-                        console.log(`[OCR] Multi-region layout detected ${validBlocks.length} blocks.`);
+                        logToUI(`[Background OCR] Multi-region layout analyzed: splitting page segment into ${validBlocks.length} independent content blocks.`, 'info');
                         firstTask.isMultiRegion = true;
                         firstTask.subTasks = [];
 
@@ -306,12 +354,16 @@
                             });
                         }
                         
-                        totalTasks += (validBlocks.length - 1);
                         queue.shift(); // Remove parent from active processing queue
                         queue.unshift(...firstTask.subTasks); // Put subtasks at the front
                         
                         firstTask.checkCompletion = () => {
                             if (firstTask.subTasks.every(st => st.done)) {
+                                completedTasks++;
+                                for (const st of firstTask.subTasks) {
+                                    activeTasksProgress.delete(st.id);
+                                }
+                                updateQueueUI();
                                 const allWords = [];
                                 let fullText = '';
                                 // Sort regions into reading order before concatenating.
@@ -342,12 +394,13 @@
                                         fullText += (st.resolvedData.text || '') + '\n\n';
                                     }
                                 }
+                                logToUI(`[Background OCR] Completed multi-region recognition (${allWords.length} total words synthesized).`, 'success');
                                 firstTask.resolve({ text: fullText.trim(), words: allWords, isMultiRegion: true });
                             }
                         };
                         continue; // Loop again to process the newly unshifted subtasks
                     } else {
-                        console.log('[OCR] Single-pass region fallback.');
+                        logToUI('[Background OCR] Using single-pass layout recognition for uniform page structure.', 'info');
                         firstTask.isMultiRegion = false;
                         firstTask.imagePayload = originalCanvas || firstTask.imagePayload; // Reuse preprocessed
                     }
@@ -356,9 +409,12 @@
                 if (firstTask.lang === 'auto' || !firstTask.lang) {
                     firstTask.lang = 'detecting...';
                     try {
+                        logToUI('[Background OCR] Executing Optical Script Detection (OSD) to identify language orientation...', 'info');
                         firstTask.resolvedLang = await detectLanguage(firstTask.imagePayload);
+                        logToUI(`[Background OCR] Script resolution confirmed: applying [${firstTask.resolvedLang}] recognition model.`, 'info');
                     } catch (e) {
                         console.warn('[OCR] OSD Detection failed or decided to skip. Falling back to eng.', e);
+                        logToUI('[Background OCR] Script detection skipped or defaulted; using standard Latin [eng] model.', 'warn');
                         firstTask.resolvedLang = 'eng';
                     }
                     firstTask.lang = firstTask.resolvedLang;
@@ -377,10 +433,13 @@
 
                 w.isBusy = true;
                 w.activeTaskId = task.id;
-                activeTasksProgress.set(task.id, 0);
+                activeTasksProgress.set(task.id, 0.05);
                 taskStartTimes.set(task.id, Date.now());
                 isProcessing = true;
                 updateQueueUI();
+                if (!task.isSubTask) {
+                    logToUI(`[Background OCR] Starting text recognition pipeline on document task #${task.id}...`, 'info');
+                }
 
                 (async () => {
                     let requeuedForScript = false;
@@ -427,8 +486,7 @@
                                     try { rescueLang = await detectLanguage(crop); } catch (e) { }
                                     task.scriptRetryDone = true;
                                     if (rescueLang && rescueLang !== 'eng' && rescueLang !== task.lang) {
-                                        console.log(`[OCR] ${low.length} low-confidence words look like`,
-                                            rescueLang, '- re-running page with that model.');
+                                        logToUI(`[Background OCR] Detected ${low.length} non-Latin character clusters; re-running recognition with targeted [${rescueLang}] model.`, 'warn');
                                         task.lang = rescueLang;
                                         requeuedForScript = true;
                                         queue.unshift(task);
@@ -438,25 +496,29 @@
                             }
                         }
 
-                        completedTasks++;
                         w.pagesProcessed++;
 
                         const resultObj = { text: data ? data.text : '', words: data ? data.words : [] };
                         if (task.isSubTask) {
                             task.resolvedData = resultObj;
                             task.done = true;
+                            activeTasksProgress.set(task.id, 1 / (task.parent.subTasks ? task.parent.subTasks.length : 1));
                             task.parent.checkCompletion();
                         } else {
+                            completedTasks++;
+                            logToUI(`[Background OCR] Recognition succeeded on task #${task.id} (${(resultObj.words || []).length} words extracted).`, 'success');
                             task.resolve({ ...resultObj, isMultiRegion: false });
                         }
                     } catch (e) {
                         console.error('Background OCR Failed', e);
-                        completedTasks++;
                         if (task.isSubTask) {
                             task.error = e;
                             task.done = true;
+                            activeTasksProgress.set(task.id, 0);
                             task.parent.checkCompletion();
                         } else {
+                            completedTasks++;
+                            logToUI(`[Background OCR] Recognition error on task #${task.id}: ${e.message || e}`, 'error');
                             task.reject(e);
                         }
                     } finally {
@@ -467,7 +529,9 @@
                         
                         w.isBusy = false;
                         w.activeTaskId = null;
-                        activeTasksProgress.delete(task.id);
+                        if (!task.isSubTask) {
+                            activeTasksProgress.delete(task.id);
+                        }
                         updateQueueUI();
                         pumpQueue();
                     }

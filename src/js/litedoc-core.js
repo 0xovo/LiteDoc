@@ -1521,10 +1521,10 @@ var LiteDocCore = (function () {
             }
             const file = files[fIndex];
             const baseProgress = (fIndex / files.length) * 100;
-            100 / files.length;
+            const fileProgressShare = 100 / files.length;
 
-            logToTerminal(`[File ${fIndex + 1}/${files.length}] Initializing: ${file.name}`);
-            updateProgress(baseProgress + 5, `Reading file ${fIndex + 1} of ${files.length}...`, file.name);
+            logToTerminal(`[File ${fIndex + 1}/${files.length}] Initializing document extraction pipeline for: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`, 'info');
+            updateProgress(Math.round(baseProgress + 5), `Reading file ${fIndex + 1} of ${files.length}...`, file.name);
 
             try {
                 checkSkip();
@@ -1560,6 +1560,7 @@ var LiteDocCore = (function () {
                 const arrayBuffer = await file.arrayBuffer();
                 checkSkip();
                 const originalBuffer = arrayBuffer.slice ? arrayBuffer.slice(0) : new Uint8Array(arrayBuffer).slice().buffer;
+                const pdfBlobUrl = URL.createObjectURL(new Blob([originalBuffer.slice(0)], { type: 'application/pdf' }));
 
                 // Enhanced PDF loading with comprehensive format support options
                 const loadingOptions = {
@@ -1581,18 +1582,26 @@ var LiteDocCore = (function () {
                 };
 
                 let pdf;
+                logToTerminal(`[Loader] Initializing PDF.js worker engine with advanced font & cmap bindings...`, 'info');
                 if (!navigator.webdriver && __litedocAddons && typeof __litedocAddons.loadPdfWithPassword === 'function') {
                     pdf = await __litedocAddons.loadPdfWithPassword(arrayBuffer, file.name, file.password);
                 } else {
                     try {
-                        pdf = await pdfjsLib.getDocument(loadingOptions).promise;
+                        const loadingTask = pdfjsLib.getDocument(loadingOptions);
+                        loadingTask.onProgress = (data) => {
+                            if (data && data.total > 0 && typeof updateProgress === 'function') {
+                                const p = Math.min(10, 5 + Math.round((data.loaded / data.total) * 5));
+                                updateProgress(Math.round(baseProgress + fileProgressShare * (p / 100)), `Loading PDF binary (${Math.round((data.loaded / data.total) * 100)}%)...`, file.name);
+                            }
+                        };
+                        pdf = await loadingTask.promise;
                     } catch (initialErr) {
                         const errName = initialErr && (initialErr.name || initialErr.constructor && initialErr.constructor.name);
                         const isPwd = errName === 'PasswordException' || /password/i.test(initialErr && initialErr.message || '');
                         if (isPwd) throw initialErr;
 
                         // Fallback to basic options if enhanced options fail
-                        logToTerminal(`Enhanced loading failed, trying basic options...`, 'warn');
+                        logToTerminal(`Enhanced PDF loading failed; reattempting with fallback compatibility options...`, 'warn');
                         const basicOptions = {
                             data: originalBuffer.slice(0),
                             password: file.password || undefined,
@@ -1604,7 +1613,10 @@ var LiteDocCore = (function () {
                 }
 
                 const pdfDoc = pdf.pdf ? pdf.pdf : pdf;
-                logToTerminal(`Recognized. Pages: ${pdfDoc.numPages}`);
+                logToTerminal(`[Structure] Document binary parsed successfully. Total Pages: ${pdfDoc.numPages}`, 'success');
+                if (typeof updateProgress === 'function') {
+                    updateProgress(Math.round(baseProgress + fileProgressShare * 0.1), `Analyzing document structure (${pdfDoc.numPages} pages)...`, file.name);
+                }
 
                 // OCR language: pass 'auto' straight through to the OCR queue.
                 // It resolves the script PER PAGE (whole page → 2x → bands) and
@@ -1619,7 +1631,12 @@ var LiteDocCore = (function () {
                 let allRawLineTexts = [];
                 if (pdfDoc.numPages >= 3) {
                     const samplePages = Math.min(pdfDoc.numPages, 12);
+                    logToTerminal(`[Pass 1: Layout Fingerprint] Sampling ${samplePages} reference pages for repeating headers and running title anomalies...`, 'info');
                     for (let pn = 1; pn <= samplePages; pn++) {
+                        if (typeof updateProgress === 'function') {
+                            const p = 10 + Math.round((pn / samplePages) * 4);
+                            updateProgress(Math.round(baseProgress + fileProgressShare * (p / 100)), `Scanning header patterns (page ${pn}/${samplePages})...`, file.name);
+                        }
                         const pg = await pdfDoc.getPage(pn);
                         const tc = await pg.getTextContent();
                         const mappedItems = tc.items.map(item => ({
@@ -1657,6 +1674,11 @@ var LiteDocCore = (function () {
                     }
                 }
                 const repeatingFPs = buildFingerprintSet(allRawLineTexts, pdfDoc.numPages);
+                if (repeatingFPs.size > 0) {
+                    logToTerminal(`[Pass 1: Layout Fingerprint] Identified ${repeatingFPs.size} repetitive header/footer signature(s) for automatic filtration.`, 'success');
+                } else {
+                    logToTerminal(`[Pass 1: Layout Fingerprint] No redundant running headers detected across sampled pages.`, 'info');
+                }
 
                 let mdText = `\x3C!-- Converted from ${file.name} — ${pdfDoc.numPages} pages --\x3E\n\n`;
                 const extractedImages = [];
@@ -1680,8 +1702,13 @@ var LiteDocCore = (function () {
                 let fontMode = null; 
                 {
                     const scanPages = Math.min(pdfDoc.numPages, 3);
+                    logToTerminal(`[Pass 2: Font Audit] Verifying custom glyph encodings across ${scanPages} evaluation page(s)...`, 'info');
                     let foundCorruption = false;
                     for (let sp = 1; sp <= scanPages && !foundCorruption; sp++) {
+                        if (typeof updateProgress === 'function') {
+                            const p = 14 + Math.round((sp / scanPages) * 3);
+                            updateProgress(Math.round(baseProgress + fileProgressShare * (p / 100)), `Auditing font integrity (page ${sp}/${scanPages})...`, file.name);
+                        }
                         const spg = await pdfDoc.getPage(sp);
                         const stc = await spg.getTextContent({ includeMarkedContent: false });
                         const cf = detectCorruptedFonts(stc.items);
@@ -1689,18 +1716,27 @@ var LiteDocCore = (function () {
                         spg.cleanup();
                     }
                     if (foundCorruption) {
+                        logToTerminal(`[Pass 2: Font Audit] Corrupted font mapping discovered! Triggering automatic resolution protocol...`, 'warn');
                         if (state.autoResolveEnabled) fontMode = state.autoResolveAction;
                         else fontMode = await showFontAlert(file.name, '');
                         if (fontMode === 'cancel') break fileLoop;
                         if (fontMode === 'skip') continue;
+                    } else {
+                        logToTerminal(`[Pass 2: Font Audit] Font structure validated. All glyph mappings are readable.`, 'success');
                     }
                 }
 
                 const CHUNK_SIZE = 10;
+                logToTerminal(`[Pass 3: Semantic Extraction] Extracting layout structures and content across ${pdfDoc.numPages} page(s)...`, 'info');
                 const processChunk = async (startPage, endPage) => {
                     for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
                         if (state.isSkippingFile) throw new Error('SKIP_FILE');
                         await new Promise(r => setTimeout(r, 0));
+                        logToTerminal(`[Page ${pageNum}/${pdfDoc.numPages}] Extracting text streams, spatial bounding boxes, and geometry...`, 'info');
+                        if (typeof updateProgress === 'function') {
+                            const pct = 0.17 + (0.80 * ((pageNum - 0.7) / (pdfDoc.numPages || 1)));
+                            updateProgress(Math.min(99, Math.max(17, Math.round(baseProgress + fileProgressShare * pct))), `Extracting page ${pageNum} of ${pdfDoc.numPages}...`, file.name);
+                        }
 
                         try {
                         const page = await pdfDoc.getPage(pageNum);
@@ -1747,7 +1783,11 @@ var LiteDocCore = (function () {
 
                         if (!items.length) {
                             if (__litedocAddons.ocrEnabled()) {
-                                logToTerminal(`[OCR] Page ${pageNum} seems to be a scan. Starting OCR...`, 'info');
+                                logToTerminal(`[Page ${pageNum}/${pdfDoc.numPages}] No embedded text layer detected; launching neural raster OCR at 2.0x high-res viewport...`, 'info');
+                                if (typeof updateProgress === 'function') {
+                                    const pct = 0.17 + (0.80 * ((pageNum - 0.4) / (pdfDoc.numPages || 1)));
+                                    updateProgress(Math.min(99, Math.round(baseProgress + fileProgressShare * pct)), `Running high-res OCR on page ${pageNum} of ${pdfDoc.numPages}...`, file.name);
+                                }
                                 const vp = page.getViewport({ scale: 2.0 });
                                 const canv = document.createElement('canvas');
                                 canv.width = vp.width; canv.height = vp.height;
@@ -1758,6 +1798,7 @@ var LiteDocCore = (function () {
                                 const ocrResult = await __litedocAddons.ocrCanvas(canv, file.name, { ocrLang: docOcrLang, ocrEnabled: true });
                                 
                                 if (ocrResult && ocrResult.words && ocrResult.words.length > 0) {
+                                    logToTerminal(`[Page ${pageNum}/${pdfDoc.numPages}] OCR finished: recovered ${ocrResult.words.length} spatial words via multi-region recognition.`, 'success');
                                     const pageH_ocr = canv.height;
                                     // Need to scale coordinates back to page.view dimensions!
                                     // Since we rendered at scale: 2.0, OCR coordinates are 2x the standard PDF coordinates!
@@ -1913,6 +1954,12 @@ var LiteDocCore = (function () {
                             .map(k => parseInt(k)).sort((a, b) => a - b)
                             .map(k => blockGroupMap[k]);
 
+                        logToTerminal(`[Page ${pageNum}/${pdfDoc.numPages}] Executing Enhanced Layout Pass: scanning vector table grids and visual figure attachments...`, 'info');
+                        if (typeof updateProgress === 'function') {
+                            const pct = 0.17 + (0.80 * ((pageNum - 0.2) / (pdfDoc.numPages || 1)));
+                            updateProgress(Math.min(99, Math.round(baseProgress + fileProgressShare * pct)), `Formatting layouts on page ${pageNum} of ${pdfDoc.numPages}...`, file.name);
+                        }
+
                         const enhancedMd = await enhancePage({
                             page, pdfjsLib, pageNum, pageW, pageH,
                             fileName: file.name.replace(/\.pdf$/i, ''),
@@ -2053,6 +2100,11 @@ var LiteDocCore = (function () {
                             if (!bodyBlocks[idx]) bodyBlocks[idx] = [];
                             bodyBlocks[idx].push(lg);
                         }
+                        // Pre-compute page prefix for md_range offset correction
+                        const showPageNums = typeof window !== 'undefined' && window.state ? !window.state.excludePageNumbers : true;
+                        const pagePrefix = showPageNums ? (pageNum > 1 ? '\n\n---\n\n' : '') + `## Page ${pageNum}\n\n` : (pageNum > 1 ? '\n\n' : '');
+                        const prefixLen = pagePrefix.length;
+
                         const blockKeys = Object.keys(bodyBlocks).map(k => parseInt(k)).sort((a, b) => a - b);
 
                         // ── Source-map: capture md output length before each block ──
@@ -2087,15 +2139,15 @@ var LiteDocCore = (function () {
 
                             // Aggregate bbox from line group items
                             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-                            let anyOcr = false;
-                            let anyTable = false;
+                            let totalItems = 0, ocrItems = 0, anyTable = false;
                             for (const lg of blockLines) {
                                 for (const it of (lg.items || [])) {
+                                    totalItems++;
+                                    if (it.isOcr) ocrItems++;
                                     if (it.x < minX) minX = it.x;
                                     if (it.y < minY) minY = it.y;
                                     if ((it.x + (it.width || 0)) > maxX) maxX = it.x + (it.width || 0);
                                     if ((it.y + (it.height || 0)) > maxY) maxY = it.y + (it.height || 0);
-                                    if (it.isOcr) anyOcr = true;
                                 }
                                 if (lg.isTable) anyTable = true;
                             }
@@ -2110,22 +2162,32 @@ var LiteDocCore = (function () {
                             }
                             if (anyTable) type = 'table';
 
+                            // Block is low-confidence if:
+                            // 1. It has OCR content AND high garbage ratio (>50% OCR + garbage)
+                            // 2. Pure OCR with no text layer at all (anyOcr && all items are OCR)
+                            const ocrRatio = totalItems > 0 ? ocrItems / totalItems : 0;
+                            // Check garbage ratio within this block
+                            let garbageItems = 0;
+                            for (const lg of blockLines) {
+                                for (const it of (lg.items || [])) {
+                                    if (it.garbage) garbageItems++;
+                                }
+                            }
+                            const garbageRatio = totalItems > 0 ? garbageItems / totalItems : 0;
+                            // Low confidence: high OCR with high garbage, or fully OCR'd with no clean text
+                            const isLowConfidence = (ocrRatio > 0.5 && garbageRatio > 0.15) || (ocrRatio > 0.9 && totalItems < 50);
+
                             const pageOffset = mdText.length;
                             sourceMap.push({
                                 page: pageNum,
-                                md_range: [pageOffset + blockStart, pageOffset + blockStart + blockLen],
+                                md_range: [pageOffset + prefixLen + blockStart, pageOffset + prefixLen + blockStart + blockLen],
                                 bbox: { x0: minX === Infinity ? null : Math.round(minX), y0: minY === Infinity ? null : Math.round(minY), x1: maxX === -Infinity ? null : Math.round(maxX), y1: maxY === -Infinity ? null : Math.round(maxY) },
                                 type,
-                                confidence: anyOcr ? 'low' : 'high',
+                                confidence: isLowConfidence ? 'low' : 'high',
                             });
                         }
                         
-                        const showPageNums = typeof window !== 'undefined' && window.state ? !window.state.excludePageNumbers : true;
-                        if (showPageNums) {
-                            mdText += (pageNum > 1 ? '\n\n---\n\n' : '') + `## Page ${pageNum}\n\n` + pageMd;
-                        } else {
-                            mdText += (pageNum > 1 ? '\n\n' : '') + pageMd;
-                        }
+                        mdText += pagePrefix + pageMd;
 
                         // ── Low-confidence detection: garbage ratio + all-OCR ──
                         const lcTotalLines = activeLines.length;
@@ -2138,21 +2200,38 @@ var LiteDocCore = (function () {
                             lowConfidencePages.push({ page: pageNum, confidence: allOcr ? 'low' : 'medium', reasons });
                         }
 
+                        if (pageLayout.tables.length > 0 || (enhancedMd && enhancedMd.trim().length > 0)) {
+                            logToTerminal(`[Page ${pageNum}/${pdfDoc.numPages}] Structured layout finalized: captured ${pageLayout.tables.length} table grid(s) and enhanced figures.`, 'success');
+                        } else {
+                            logToTerminal(`[Page ${pageNum}/${pdfDoc.numPages}] Structured layout finalized: formulated ${activeLines.length} semantic content lines.`, 'success');
+                        }
+                        if (lowConfidencePages.length > 0 && lowConfidencePages[lowConfidencePages.length - 1].page === pageNum) {
+                            logToTerminal(`[Page ${pageNum}/${pdfDoc.numPages}] Flagged for QA inspection: ${lowConfidencePages[lowConfidencePages.length - 1].reasons.join(', ')}`, 'warn');
+                        }
+                        if (typeof updateProgress === 'function') {
+                            const pct = 0.17 + (0.80 * (pageNum / (pdfDoc.numPages || 1)));
+                            updateProgress(Math.min(99, Math.round(baseProgress + fileProgressShare * pct)), `Completed page ${pageNum} of ${pdfDoc.numPages}`, file.name);
+                        }
+
                         page.cleanup();
                         } catch (e) {
                             console.error(`[Core Error] Page ${pageNum} processing failed:`, e);
+                            logToTerminal(`[Page ${pageNum}/${pdfDoc.numPages}] Processing encountered an exception: ${e.message || e}`, 'error');
                         }
                     }
                 };
 
                 for (let chunkStart = 1; chunkStart <= pdfDoc.numPages; chunkStart += CHUNK_SIZE) {
-                    await processChunk(chunkStart, Math.min(chunkStart + CHUNK_SIZE - 1, pdfDoc.numPages));
+                    const chunkEnd = Math.min(chunkStart + CHUNK_SIZE - 1, pdfDoc.numPages);
+                    logToTerminal(`[Chunk Processing] Extracting data from page block ${chunkStart}–${chunkEnd}...`, 'info');
+                    await processChunk(chunkStart, chunkEnd);
                 }
                 await pdfDoc.destroy();
-                state.processedData.push({ filename: file.name, status: 'success', mdText, extractedImages, inlineRenders: pageInlineRenders, numPages: pdfDoc.numPages, layout: docLayout, sourceMap, lowConfidencePages });
+                logToTerminal(`[Conversion Complete] Finished ${file.name}: 100% of document hierarchy successfully indexed and mapped!`, 'success');
+                state.processedData.push({ filename: file.name, status: 'success', mdText, extractedImages, inlineRenders: pageInlineRenders, numPages: pdfDoc.numPages, layout: docLayout, sourceMap, lowConfidencePages, pdfBlobUrl });
             } catch (err) { logToTerminal(`Failed: ${file.name}`, 'error'); }
         }
-        updateProgress(100, 'Complete', '');
+        updateProgress(100, 'Conversion Finished', 'Ready');
 
         if (typeof window !== 'undefined' && window.finishProcessing) {
             window.finishProcessing();

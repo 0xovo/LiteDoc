@@ -94,7 +94,7 @@ function toggleWordWrap() {
 
 function enterEditMode() {
     state.isEditing = true;
-    if (state.currentViewMode === 'rendered') {
+    if (state.currentViewMode === 'rendered' || state.currentViewMode === 'pdf') {
         window.setViewMode('raw');
     } else {
         window.setViewMode(state.currentViewMode);

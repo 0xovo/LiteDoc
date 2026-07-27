@@ -74,15 +74,105 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    // 4. Remove Splash Screen / Preloader (FOUC protection)
-    setTimeout(() => {
-        const preloader = document.getElementById('app-preloader');
-        if (preloader) {
-            preloader.style.opacity = '0';
-            preloader.style.visibility = 'hidden';
-            setTimeout(() => preloader.remove(), 500); // Wait for fade transition
+    // 4. LiteDoc Animated Loading Screen Overlay State Machine
+    const overlay = document.getElementById('litedoc-loader-overlay');
+    const frame = document.getElementById('litedoc-loader-frame');
+    const logo = document.getElementById('loader-logo');
+    const md = document.getElementById('loader-md');
+    const pdf = document.getElementById('loader-pdf');
+    const scanner = document.getElementById('loader-scanner');
+    const mainApp = document.getElementById('main-app-content');
+
+    if (overlay && frame) {
+        if (localStorage.getItem('litedoc-disable-animation') === 'true') {
+            overlay.remove();
+            if (mainApp) {
+                mainApp.style.opacity = '1';
+                mainApp.style.transform = 'scale(1)';
+                mainApp.style.position = 'static';
+                mainApp.style.pointerEvents = 'auto';
+            }
+            return;
         }
-    }, 150); // Slight delay ensures Tailwind paints first
+
+        // Phase: 'pdf' (initial state held for 300ms)
+        setTimeout(() => {
+            // Phase: 'scanning' (Scanner line moves and wipes down PDF)
+            if (pdf) pdf.classList.add('animate-wipe');
+            if (scanner) {
+                scanner.style.display = 'block';
+                scanner.classList.add('animate-scan');
+            }
+
+            // After 600ms scan duration
+            setTimeout(() => {
+                // Phase: 'md' (Markdown icon revealed)
+                if (pdf) pdf.style.opacity = '0';
+                if (scanner) scanner.style.display = 'none';
+
+                // After 400ms viewing markdown
+                setTimeout(() => {
+                    // Phase: 'logo' (Morph to litedoc.xyz pill)
+                    frame.style.width = '12rem';
+                    frame.style.height = '3rem';
+                    frame.style.borderRadius = '9999px';
+                    if (md) md.style.opacity = '0';
+                    if (logo) {
+                        logo.style.opacity = '1';
+                        logo.style.transform = 'scale(1)';
+                        logo.style.pointerEvents = 'auto';
+                    }
+
+                    // After 600ms viewing logo pill
+                    setTimeout(() => {
+                        // Phase: 'fadeText' (Text fades out before window expansion)
+                        if (logo) {
+                            logo.style.transition = 'opacity 200ms ease, transform 200ms ease';
+                            logo.style.opacity = '0';
+                            logo.style.transform = 'scale(0.95)';
+                            logo.style.pointerEvents = 'none';
+                        }
+
+                        // After 200ms text fade duration
+                        setTimeout(() => {
+                            // Phase: 'expand' (Frame expands to screen edges, UI scales up with spring bounce)
+                            overlay.style.backgroundColor = 'transparent';
+                            overlay.style.pointerEvents = 'none';
+
+                            frame.style.width = '100vw';
+                            frame.style.height = '100vh';
+                            frame.style.borderRadius = '0px';
+                            frame.style.border = '0px solid transparent';
+                            frame.style.backgroundColor = 'transparent';
+                            frame.style.boxShadow = 'none';
+
+                            if (mainApp) {
+                                mainApp.classList.remove('opacity-0', 'scale-95', 'fixed', 'inset-0', 'overflow-hidden', 'pointer-events-none');
+                                mainApp.classList.add('opacity-100', 'scale-100');
+                                mainApp.style.opacity = '1';
+                                mainApp.style.transform = 'scale(1)';
+                                mainApp.style.position = 'relative';
+                                mainApp.style.inset = 'auto';
+                                mainApp.style.overflow = 'visible';
+                                mainApp.style.pointerEvents = 'auto';
+                            }
+
+                            // After 500ms expand transition completes
+                            setTimeout(() => {
+                                // Phase: 'complete' (Unmount loader automatically)
+                                overlay.remove();
+                                if (mainApp) {
+                                    mainApp.style.position = '';
+                                    mainApp.style.overflow = '';
+                                    mainApp.style.inset = '';
+                                }
+                            }, 500); // Wait for expand transition
+                        }, 200); // Duration of text fade
+                    }, 600); // Time to look at logo
+                }, 400); // Time to look at markdown
+            }, 600); // Duration of scan
+        }, 300); // Initial delay
+    }
 });
 
 // 4. Central Conversion Pipeline Hook for dropzone.js

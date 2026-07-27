@@ -83,7 +83,7 @@ function toggleTheme() {
             b.classList.toggle('selected', isSelected);
             if (isSelected) {
                 const display = document.getElementById('ar-action-display');
-                if (display) display.textContent = b.textContent;
+                if (display) display.innerHTML = b.innerHTML;
             }
         });
 
@@ -123,6 +123,17 @@ function toggleTheme() {
             if (pgnBtn) pgnBtn.style.background = 'var(--bg-input)';
             if (pgnKnob) pgnKnob.style.transform = 'translateX(0)';
         }
+
+        const animDisabled = localStorage.getItem('litedoc-disable-animation') === 'true';
+        const animBtn = document.getElementById('animation-toggle-btn');
+        const animKnob = document.getElementById('animation-toggle-knob');
+        if (!animDisabled) {
+            if (animBtn) animBtn.style.background = 'var(--accent)';
+            if (animKnob) { animKnob.style.transform = 'translateX(20px)'; animKnob.style.background = '#fff'; }
+        } else {
+            if (animBtn) animBtn.style.background = 'var(--bg-input)';
+            if (animKnob) { animKnob.style.transform = 'translateX(0)'; animKnob.style.background = 'rgba(255,255,255,0.4)'; }
+        }
     });
 })();
 
@@ -133,12 +144,16 @@ function toggleFullscreen() {
     if (!viewerCard.classList.contains('fixed')) {
         viewerCard.classList.add('fixed', 'inset-0', 'z-[200]', 'rounded-none');
         viewerCard.classList.remove('md:col-span-2', 'min-h-[450px]');
+        document.body.style.overflow = 'hidden';
+        document.documentElement.style.overflow = 'hidden';
         btn.style.color = 'var(--accent-hi)';
         btn.style.background = 'var(--accent-low)';
         btn.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 14h6m0 0v6m0-6l-7 7m17-11h-6m0 0V4m0 6l-7-7M4 10h6m0 0V4m0 6l-7-7m17 11h-6m0 0v6m0-6l7 7" /></svg>`;
     } else {
         viewerCard.classList.remove('fixed', 'inset-0', 'z-[200]', 'rounded-none');
         viewerCard.classList.add('md:col-span-2', 'min-h-[450px]');
+        document.body.style.overflow = '';
+        document.documentElement.style.overflow = '';
         btn.style.color = 'var(--text-2)';
         btn.style.background = 'transparent';
         btn.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>`;
@@ -302,6 +317,23 @@ function toggleRawTextMode() {
     }
 }
 
+// Startup Animation Toggle
+function toggleStartupAnimation() {
+    const isDisabled = localStorage.getItem('litedoc-disable-animation') === 'true';
+    const newDisabled = !isDisabled;
+    localStorage.setItem('litedoc-disable-animation', newDisabled.toString());
+
+    const btn = document.getElementById('animation-toggle-btn');
+    const knob = document.getElementById('animation-toggle-knob');
+    if (!newDisabled) {
+        if (btn) btn.style.background = 'var(--accent)';
+        if (knob) { knob.style.transform = 'translateX(20px)'; knob.style.background = '#fff'; }
+    } else {
+        if (btn) btn.style.background = 'var(--bg-input)';
+        if (knob) { knob.style.transform = 'translateX(0)'; knob.style.background = 'rgba(255,255,255,0.4)'; }
+    }
+}
+
 function setAutoResolveAction(action) {
     state.autoResolveAction = action;
     localStorage.setItem('litedoc-ar-action', action);
@@ -310,20 +342,49 @@ function setAutoResolveAction(action) {
         b.classList.toggle('selected', isSelected);
         if (isSelected) {
             const display = document.getElementById('ar-action-display');
-            if (display) display.textContent = b.textContent;
+            if (display) display.innerHTML = b.innerHTML;
         }
     });
     const customSel = document.getElementById('ar-custom-select');
     if (customSel) customSel.classList.remove('open');
 }
 
-// Close custom select when clicking outside
+// Close custom select dropdowns when clicking outside
 document.addEventListener('click', (e) => {
-    const customSel = document.getElementById('ar-custom-select');
-    if (customSel && customSel.classList.contains('open') && !customSel.contains(e.target)) {
-        customSel.classList.remove('open');
-    }
+    document.querySelectorAll('.ld-custom-select.open').forEach(sel => {
+        if (!sel.contains(e.target)) {
+            sel.classList.remove('open');
+        }
+    });
 });
+
+window.toggleCustomSelect = function(displayEl) {
+    const customSel = displayEl.parentElement;
+    if (customSel) {
+        document.querySelectorAll('.ld-custom-select.open').forEach(sel => {
+            if (sel !== customSel) sel.classList.remove('open');
+        });
+        customSel.classList.toggle('open');
+    }
+};
+
+window.selectSplitOption = function(side, value, displayHTML) {
+    const selectEl = document.getElementById(`split-${side}-select`);
+    const displayEl = document.getElementById(`split-${side}-display`);
+    const customSel = document.getElementById(`split-${side}-custom-select`);
+    
+    if (selectEl) selectEl.value = value;
+    if (displayEl) displayEl.innerHTML = displayHTML;
+    if (customSel) {
+        customSel.classList.remove('open');
+        customSel.querySelectorAll('.ld-select-option').forEach(opt => {
+            opt.classList.toggle('selected', opt.dataset.value === value);
+        });
+    }
+    if (typeof window.switchSplitPanel === 'function') {
+        window.switchSplitPanel(side, value);
+    }
+};
 
 // Font Alert Promised Wrapper
 function showFontAlert(filename, queuePos) {
@@ -378,9 +439,14 @@ function setViewMode(mode) {
     }
 
     // Toggle Pills
-    document.getElementById('vm-raw').classList.toggle('on', mode === 'raw');
-    document.getElementById('vm-rendered').classList.toggle('on', mode === 'rendered');
-    document.getElementById('vm-split').classList.toggle('on', mode === 'split');
+    const rawBtn = document.getElementById('vm-raw');
+    const renderedBtn = document.getElementById('vm-rendered');
+    const pdfBtn = document.getElementById('vm-pdf');
+    const splitBtn = document.getElementById('vm-split');
+    if (rawBtn) rawBtn.classList.toggle('on', mode === 'raw');
+    if (renderedBtn) renderedBtn.classList.toggle('on', mode === 'rendered');
+    if (pdfBtn) pdfBtn.classList.toggle('on', mode === 'pdf');
+    if (splitBtn) splitBtn.classList.toggle('on', mode === 'split');
 
     const editBtn = document.getElementById('vm-edit');
     const saveBtn = document.getElementById('vm-save');
@@ -457,6 +523,8 @@ function setViewMode(mode) {
 
     const rawEl = document.getElementById('viewer-md-container');
     const renderedEl = document.getElementById('viewer-md-rendered');
+    const splitRenderedLeft = document.getElementById('split-rendered-left');
+    const splitRawRight = document.getElementById('split-raw-right');
     const editorEl = document.getElementById('raw-markdown-block');
     const wrapper = document.getElementById('viewer-content-wrapper');
     const findBtn = document.getElementById('vm-find');
@@ -465,9 +533,25 @@ function setViewMode(mode) {
     const undoBtn = document.getElementById('vm-undo');
     const redoBtn = document.getElementById('vm-redo');
     const resizer = document.getElementById('split-resizer');
+    const panelControls = document.getElementById('split-panel-controls');
 
-    // Reset visibility
-    [rawEl, renderedEl, editorEl, findBtn, linesBtn, wrapBtn, unformatBtn, undoBtn, redoBtn, resizer].forEach(el => { if (el) el.classList.add('hidden'); });
+    // Reset visibility: hide all content elements
+    const pdfEl = document.getElementById('viewer-pdf-container');
+    const splitPdfLeft = document.getElementById('split-pdf-left');
+    const splitPdfRight = document.getElementById('split-pdf-right');
+    [rawEl, renderedEl, pdfEl, splitRenderedLeft, splitRawRight, splitPdfLeft, splitPdfRight, editorEl, resizer, findBtn, linesBtn, wrapBtn, unformatBtn, undoBtn, redoBtn].forEach(el => { if (el) el.classList.add('hidden'); });
+    if (panelControls) panelControls.classList.add('hidden');
+
+    // Clear low-confidence highlights across all views
+    if (window._clearLowConfHighlights) window._clearLowConfHighlights();
+
+    // Reset flex overrides from split resizer
+    [rawEl, renderedEl, pdfEl, splitRenderedLeft, splitRawRight, splitPdfLeft, splitPdfRight, editorEl].forEach(el => { if (el) el.style.flex = ''; });
+
+    // Clear PDF embeds to avoid stale content
+    [pdfEl, splitPdfLeft, splitPdfRight].forEach(el => { if (el) { const e = el.querySelector('embed'); if (e) e.removeAttribute('src'); } });
+
+    // Reset wrapper direction
     if (wrapper) { wrapper.classList.remove('flex-row'); wrapper.classList.add('flex-col'); }
 
     const textToRender = (window.mdEditor && state.hasUnsavedChanges) ? window.mdEditor.getValue() : (activeData ? activeData.mdText : '');
@@ -491,26 +575,49 @@ function setViewMode(mode) {
             renderedEl.classList.remove('hidden');
             if (activeData) window.renderMarkdown(textToRender);
         }
-    } else if (mode === 'split') {
-        if (renderedEl && wrapper) {
-            renderedEl.classList.remove('hidden');
-            wrapper.classList.remove('flex-col'); wrapper.classList.add('flex-row');
-            if (resizer) resizer.classList.remove('hidden');
-            
-            if (state.isEditing && editorEl) {
-                editorEl.classList.remove('hidden');
-                [findBtn, linesBtn, wrapBtn, unformatBtn, undoBtn, redoBtn].forEach(el => { if (el) el.classList.remove('hidden'); });
-                if (window.mdEditor) {
-                    if (!state.hasUnsavedChanges && activeData) {
-                        window.isSyncingAce = true; window.mdEditor.setValue(activeData.mdText, -1); window.isSyncingAce = false;
-                    }
-                    window.renderMarkdown(window.mdEditor.getValue());
-                    setTimeout(() => window.mdEditor.resize(), 50);
-                }
-            } else if (rawEl) {
-                rawEl.classList.remove('hidden');
-                if (activeData) { rawEl.textContent = textToRender; window.renderMarkdown(textToRender); }
+    } else if (mode === 'pdf') {
+        if (pdfEl) {
+            if (activeData && activeData.pdfBlobUrl) {
+                const embed = pdfEl.querySelector('embed');
+                if (embed) embed.src = activeData.pdfBlobUrl + '#toolbar=0&navpanes=0&scrollbar=0&statusbar=0&messages=0&view=FitH,top';
             }
+            pdfEl.classList.remove('hidden');
+        }
+    } else if (mode === 'split') {
+        if (wrapper) { wrapper.classList.remove('flex-col'); wrapper.classList.add('flex-row'); }
+        if (resizer) resizer.classList.remove('hidden');
+        if (panelControls) panelControls.classList.remove('hidden');
+
+        if (state.isEditing && editorEl) {
+            // Edit+split: editor always on left, rendered on right
+            editorEl.classList.remove('hidden');
+            renderedEl.classList.remove('hidden');
+            [findBtn, linesBtn, wrapBtn, unformatBtn, undoBtn, redoBtn].forEach(el => { if (el) el.classList.remove('hidden'); });
+            if (window.mdEditor) {
+                if (!state.hasUnsavedChanges && activeData) {
+                    window.isSyncingAce = true; window.mdEditor.setValue(activeData.mdText, -1); window.isSyncingAce = false;
+                }
+                window.renderMarkdown(window.mdEditor.getValue());
+                setTimeout(() => window.mdEditor.resize(), 50);
+            }
+            state.splitLeftElId = 'raw-markdown-block';
+            state.splitRightElId = 'viewer-md-rendered';
+        } else {
+            // Non-edit split: use panel selectors
+            const leftSelect = document.getElementById('split-left-select');
+            const rightSelect = document.getElementById('split-right-select');
+            const leftView = leftSelect ? leftSelect.value : 'raw';
+            const rightView = rightSelect ? rightSelect.value : 'rendered';
+            switchSplitPanel('left', leftView);
+            switchSplitPanel('right', rightView);
+        }
+
+        // Apply saved split ratio to left element and control headers
+        if (state.splitRatio) {
+            const leftEl = document.getElementById(state.splitLeftElId);
+            if (leftEl) leftEl.style.flex = `0 0 ${state.splitRatio}%`;
+            const leftCtrl = document.querySelector('#split-panel-controls .split-panel-side:first-child');
+            if (leftCtrl) leftCtrl.style.flex = `0 0 ${state.splitRatio}%`;
         }
     }
 }
@@ -535,35 +642,114 @@ window.addEventListener('resize', () => {
 
 // Split Resizer Logic
 window.addEventListener('DOMContentLoaded', () => {
+
+// Split panel view switching via select dropdowns
+window.switchSplitPanel = function(side, view) {
+    const activeData = state.processedData[state.activeDataIndex];
+    if (!activeData) return;
+
+    // In edit+split mode, left side is always the editor — ignore left switches
+    if (side === 'left' && state.isEditing) return;
+
+    if (side === 'left') {
+        const rawEl = document.getElementById('viewer-md-container');
+        const renderedEl = document.getElementById('split-rendered-left');
+        const pdfEl = document.getElementById('split-pdf-left');
+
+        // Hide all left-side options
+        [rawEl, renderedEl, pdfEl].forEach(el => { if (el) { el.classList.add('hidden'); el.style.flex = ''; } });
+        // Clear stale PDF embed
+        if (pdfEl) { const e = pdfEl.querySelector('embed'); if (e) e.removeAttribute('src'); }
+
+        if (view === 'raw') {
+            rawEl.classList.remove('hidden');
+            rawEl.textContent = activeData.mdText || '';
+            state.splitLeftElId = 'viewer-md-container';
+        } else if (view === 'rendered') {
+            renderedEl.classList.remove('hidden');
+            window.renderMarkdown(activeData.mdText || '', renderedEl);
+            state.splitLeftElId = 'split-rendered-left';
+        } else if (view === 'pdf') {
+            if (activeData.pdfBlobUrl && pdfEl) {
+                const embed = pdfEl.querySelector('embed');
+                if (embed) embed.src = activeData.pdfBlobUrl + '#toolbar=0&navpanes=0&scrollbar=0&statusbar=0&messages=0&view=FitH,top';
+                pdfEl.classList.remove('hidden');
+                state.splitLeftElId = 'split-pdf-left';
+            }
+        }
+
+        // Re-apply split ratio
+        if (state.splitRatio) {
+            const leftEl = document.getElementById(state.splitLeftElId);
+            if (leftEl) leftEl.style.flex = `0 0 ${state.splitRatio}%`;
+            const leftCtrl = document.querySelector('#split-panel-controls .split-panel-side:first-child');
+            if (leftCtrl) leftCtrl.style.flex = `0 0 ${state.splitRatio}%`;
+        }
+    } else {
+        const rawEl = document.getElementById('split-raw-right');
+        const renderedEl = document.getElementById('viewer-md-rendered');
+        const pdfEl = document.getElementById('split-pdf-right');
+
+        // Hide all right-side options
+        [rawEl, renderedEl, pdfEl].forEach(el => { if (el) { el.classList.add('hidden'); el.style.flex = ''; } });
+        // Clear stale PDF embed
+        if (pdfEl) { const e = pdfEl.querySelector('embed'); if (e) e.removeAttribute('src'); }
+
+        if (view === 'raw') {
+            rawEl.classList.remove('hidden');
+            rawEl.textContent = activeData.mdText || '';
+            state.splitRightElId = 'split-raw-right';
+        } else if (view === 'rendered') {
+            renderedEl.classList.remove('hidden');
+            window.renderMarkdown(activeData.mdText || '', renderedEl);
+            state.splitRightElId = 'viewer-md-rendered';
+        } else if (view === 'pdf') {
+            if (activeData.pdfBlobUrl && pdfEl) {
+                const embed = pdfEl.querySelector('embed');
+                if (embed) embed.src = activeData.pdfBlobUrl + '#toolbar=0&navpanes=0&scrollbar=0&statusbar=0&messages=0&view=FitH,top';
+                pdfEl.classList.remove('hidden');
+                state.splitRightElId = 'split-pdf-right';
+            }
+        }
+    }
+};
+
     const splitResizer = document.getElementById('split-resizer');
     const viewerWrapper = document.getElementById('viewer-content-wrapper');
-    const editorBlock = document.getElementById('raw-markdown-block');
-    const rawEl = document.getElementById('viewer-md-container');
     let isResizing = false;
+    let startMouseX = 0;
+    let startLeftWidth = 0;
 
     if (splitResizer) {
-        splitResizer.addEventListener('mousedown', () => {
+        splitResizer.addEventListener('mousedown', (e) => {
             isResizing = true; splitResizer.classList.add('dragging');
             document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none';
+            document.querySelectorAll('#split-pdf-left, #split-pdf-right, #split-pdf-left embed, #split-pdf-right embed').forEach(el => el.style.pointerEvents = 'none');
+            startMouseX = e.clientX;
+            const leftEl = document.getElementById(state.splitLeftElId || (state.isEditing ? 'raw-markdown-block' : 'viewer-md-container'));
+            startLeftWidth = leftEl ? leftEl.getBoundingClientRect().width : 0;
+            e.preventDefault();
         });
         document.addEventListener('mousemove', (e) => {
             if (!isResizing) return;
             const containerRect = viewerWrapper.getBoundingClientRect();
-            let newWidthPercent = ((e.clientX - containerRect.left) / containerRect.width) * 100;
+            // Using direct bounding box offset prevents jumping in full-screen or scaled layouts
+            const offset = e.clientX - containerRect.left;
+            let newWidthPercent = (offset / containerRect.width) * 100;
             newWidthPercent = Math.max(15, Math.min(85, newWidthPercent));
             state.splitRatio = newWidthPercent;
-            
-            if (state.isEditing && editorBlock) {
-                editorBlock.style.flex = `0 0 ${newWidthPercent}%`;
-                if (window.mdEditor) window.mdEditor.resize();
-            } else if (rawEl) {
-                rawEl.style.flex = `0 0 ${newWidthPercent}%`;
-            }
+
+            const leftEl = document.getElementById(state.splitLeftElId || (state.isEditing ? 'raw-markdown-block' : 'viewer-md-container'));
+            if (leftEl) leftEl.style.flex = `0 0 ${newWidthPercent}%`;
+            const leftCtrl = document.querySelector('#split-panel-controls .split-panel-side:first-child');
+            if (leftCtrl) leftCtrl.style.flex = `0 0 ${newWidthPercent}%`;
+            if (state.isEditing && window.mdEditor) window.mdEditor.resize();
         });
         document.addEventListener('mouseup', () => {
             if (isResizing) {
                 isResizing = false; splitResizer.classList.remove('dragging');
                 document.body.style.cursor = ''; document.body.style.userSelect = '';
+                document.querySelectorAll('#split-pdf-left, #split-pdf-right, #split-pdf-left embed, #split-pdf-right embed').forEach(el => el.style.pointerEvents = '');
             }
         });
     }
@@ -637,6 +823,7 @@ window.toggleMathRendering = toggleMathRendering;
 window.togglePageNumbers = togglePageNumbers;
 window.toggleAutoResolve = toggleAutoResolve;
 window.toggleRawTextMode = toggleRawTextMode;
+window.toggleStartupAnimation = toggleStartupAnimation;
 window.setAutoResolveAction = setAutoResolveAction;
 window.setImgRes = setImgRes;
 window.setViewMode = setViewMode;
@@ -651,3 +838,5 @@ window.openImagePreview = openImagePreview;
 window.closeImagePreview = closeImagePreview;
 window.navigateImage = navigateImage;
 window.shareLiteDoc = shareLiteDoc;
+window.toggleCustomSelect = window.toggleCustomSelect;
+window.selectSplitOption = window.selectSplitOption;

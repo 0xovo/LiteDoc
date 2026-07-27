@@ -7,11 +7,13 @@ function containsArabic(text) {
 window._lastRenderedMd = "";
 window._mdRenderTimer = null;
 
-function renderMarkdown(mdText) {
-    if (window._lastRenderedMd === mdText) return;
-    window._lastRenderedMd = mdText;
+function renderMarkdown(mdText, targetEl) {
+    const targetId = targetEl ? (targetEl.id || 'custom-target') : 'viewer-md-rendered';
+    const cacheKey = mdText + '|' + targetId;
+    if (window._lastRenderedMd === cacheKey) return;
+    window._lastRenderedMd = cacheKey;
 
-    const container = document.getElementById('viewer-md-rendered');
+    const container = targetEl || document.getElementById('viewer-md-rendered');
     if (!mdText) { container.innerHTML = ''; return; }
 
     // throttle re-renders

@@ -87,15 +87,81 @@
 
 <body>
 
-    <!-- FOUC Preloader / Splash Screen -->
-    <div id="app-preloader" style="position:fixed; inset:0; background:var(--bg-app, #0f1115); z-index:99999; display:flex; flex-direction:column; align-items:center; justify-content:center; transition:opacity 0.4s ease, visibility 0.4s ease;">
-        <div style="font-family:'Plus Jakarta Sans', sans-serif; font-size:2rem; font-weight:700; color:#ffffff; letter-spacing:-0.01em; margin-bottom:20px;">
-            litedoc<span style="color:#6366f1">.xyz</span>
-        </div>
-        <div style="width:24px; height:24px; border:3px solid rgba(99,102,241,0.2); border-top-color:#6366f1; border-radius:50%; animation:spin 1s linear infinite;"></div>
-        <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
-    </div>
+    <!-- LiteDoc Animated Loading Screen Overlay -->
+    <div id="litedoc-loader-overlay" class="flex flex-col items-center justify-center fixed inset-0 w-full min-h-screen font-mono text-slate-300 select-none z-[99999] transition-colors duration-500 ease-in-out" style="position:fixed; inset:0; width:100%; min-height:100vh; font-family:monospace; color:#cbd5e1; user-select:none; z-index:99999; transition: background-color 500ms ease-in-out; background-color: var(--bg-card); display: flex; flex-direction: column; align-items: center; justify-content: center;">
+        <div id="litedoc-loader-frame" class="relative flex flex-col overflow-hidden transition-all duration-500 w-32 h-44 rounded-md border-2 border-slate-700/80 shadow-2xl shadow-black/40" style="position: relative; display: flex; flex-direction: column; overflow: hidden; transition: all 500ms cubic-bezier(0.76, 0, 0.24, 1); width: 8rem; height: 11rem; border-radius: 0.375rem; border: 2px solid var(--border-hi); background-color: var(--bg-input); box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);">
+            <!-- LOGO TEXT -->
+            <div id="loader-logo" class="absolute inset-0 flex items-center justify-center transition-all duration-300 z-30 opacity-0 scale-95 pointer-events-none" style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; transition: all 300ms ease 200ms; z-index: 30; opacity: 0; transform: scale(0.95); pointer-events: none;">
+                <span class="font-bold text-white tracking-wide text-lg" style="font-family:'Plus Jakarta Sans', sans-serif; font-weight:700; color:var(--text-1); letter-spacing:0.025em; font-size:1.125rem;">
+                    litedoc<span style="color:var(--accent);">.xyz</span>
+                </span>
+            </div>
 
+            <!-- MARKDOWN LAYER -->
+            <div id="loader-md" class="absolute inset-0 flex flex-col pt-4 px-3 transition-opacity duration-300 opacity-100" style="position: absolute; inset: 0; display: flex; flex-direction: column; padding-top: 1rem; padding-left: 0.75rem; padding-right: 0.75rem; background-color: var(--bg-input); transition: opacity 300ms ease 200ms; opacity: 1;">
+                <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.25rem;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <span style="color: #818cf8; font-weight: 700; font-size: 0.875rem; line-height: 1;">#</span>
+                        <div style="height: 0.375rem; background-color: rgba(129, 140, 248, 0.8); border-radius: 0.25rem; width: 4rem;"></div>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 0.375rem; padding-left: 0.75rem; border-left: 2px solid rgba(71, 85, 105, 0.5);">
+                        <div style="height: 0.25rem; background-color: #94a3b8; border-radius: 0.25rem; width: 100%;"></div>
+                        <div style="height: 0.25rem; background-color: #94a3b8; border-radius: 0.25rem; width: 91.666%;"></div>
+                        <div style="height: 0.25rem; background-color: #94a3b8; border-radius: 0.25rem; width: 80%;"></div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 0.5rem; padding-top: 0.25rem;">
+                        <span style="color: #818cf8; font-weight: 700; font-size: 0.875rem; line-height: 1;">-</span>
+                        <div style="height: 0.25rem; background-color: #94a3b8; border-radius: 0.25rem; width: 2.5rem;"></div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <span style="color: #818cf8; font-weight: 700; font-size: 0.875rem; line-height: 1;">-</span>
+                        <div style="height: 0.25rem; background-color: #94a3b8; border-radius: 0.25rem; width: 3.5rem;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PDF LAYER -->
+            <div id="loader-pdf" class="absolute inset-0 flex flex-col pt-4 px-3 z-10 opacity-100" style="position: absolute; inset: 0; background-color: var(--bg-input); display: flex; flex-direction: column; padding-top: 1rem; padding-left: 0.75rem; padding-right: 0.75rem; z-index: 10; opacity: 1; transition: opacity 300ms ease;">
+                <div style="position: absolute; top: 0; left: 0; width: 100%; height: 0.375rem; background-color: #ef4444;"></div>
+                <div style="display: flex; justify-content: center; margin-top: 0.25rem; margin-bottom: 1rem;">
+                    <span style="color: #ef4444; font-weight: 700; letter-spacing: 0.1em; font-size: 10px; border: 1px solid rgba(239, 68, 68, 0.3); padding: 0.125rem 0.375rem; border-radius: 0.25rem;">PDF</span>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 0.5rem; width: 100%; align-items: center;">
+                    <div style="height: 0.375rem; background-color: #64748b; border-radius: 0.25rem; width: 100%;"></div>
+                    <div style="height: 0.375rem; background-color: #64748b; border-radius: 0.25rem; width: 100%;"></div>
+                    <div style="height: 0.375rem; background-color: #64748b; border-radius: 0.25rem; width: 75%;"></div>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 0.5rem; width: 100%; align-items: center; margin-top: 1rem;">
+                    <div style="height: 0.375rem; background-color: #64748b; border-radius: 0.25rem; width: 83.333%;"></div>
+                    <div style="height: 0.375rem; background-color: #64748b; border-radius: 0.25rem; width: 100%;"></div>
+                </div>
+            </div>
+
+            <!-- SCANNER LINE -->
+            <div id="loader-scanner" style="display: none; position: absolute; left: 0; width: 100%; height: 2px; background-color: #818cf8; box-shadow: 0 0 12px 3px rgba(99, 102, 241, 0.6); z-index: 20;"></div>
+        </div>
+    </div>
+    <style>
+        @keyframes wipeDown {
+          0% { clip-path: inset(0 0 0 0); }
+          100% { clip-path: inset(100% 0 0 0); }
+        }
+        @keyframes scanDown {
+          0% { top: 0%; opacity: 0; }
+          10% { opacity: 1; }
+          95% { top: 100%; opacity: 1; }
+          100% { top: 100%; opacity: 0; }
+        }
+        .animate-wipe {
+          animation: wipeDown 0.6s linear forwards;
+        }
+        .animate-scan {
+          animation: scanDown 0.6s linear forwards;
+        }
+    </style>
+
+    <!-- MAIN APP UI WRAPPER (CHILDREN) -->
+    <div id="main-app-content" class="w-full min-h-screen transition-all duration-500 origin-center opacity-0 scale-95 fixed inset-0 overflow-hidden pointer-events-none" style="transition: opacity 500ms cubic-bezier(0.34, 1.56, 0.64, 1), transform 500ms cubic-bezier(0.34, 1.56, 0.64, 1); transform-origin: center; opacity: 0; transform: scale(0.95); position: fixed; inset: 0; overflow: hidden; pointer-events: none;">
     <!-- nav -->
     <nav class="welcome-animate">
         <div class="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
@@ -341,16 +407,32 @@
                             <div id="autoresolve-submenu" class="hidden mt-3" style="justify-content:flex-end;">
                                 <div class="ld-custom-select" id="ar-custom-select" style="width:100%">
                                     <div class="ld-select-display" onclick="this.parentElement.classList.toggle('open')">
-                                        <span class="ld-select-value" id="ar-action-display">🖼️ Render as images</span>
+                                        <span class="ld-select-value" id="ar-action-display"><svg class="w-4 h-4 flex-shrink-0 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg> <span>Render as images</span></span>
                                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
                                     </div>
                                     <div class="ld-select-dropdown">
-                                        <div class="ld-select-option" data-ar="render" onclick="setAutoResolveAction('render')">🖼️ Render as images</div>
-                                        <div class="ld-select-option" data-ar="gibberish" onclick="setAutoResolveAction('gibberish')">💩 Extract gibberish</div>
-                                        <div class="ld-select-option" data-ar="clean" onclick="setAutoResolveAction('clean')">🧹 Clean text only</div>
-                                        <div class="ld-select-option" data-ar="skip" onclick="setAutoResolveAction('skip')">⏭️ Skip</div>
+                                        <div class="ld-select-option" data-ar="render" onclick="setAutoResolveAction('render')"><svg class="w-4 h-4 flex-shrink-0 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg> <span>Render as images</span></div>
+                                        <div class="ld-select-option" data-ar="gibberish" onclick="setAutoResolveAction('gibberish')"><svg class="w-4 h-4 flex-shrink-0 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v7.31"/><path d="M14 9.3V1.99"/><path d="M8.5 2h7"/><path d="M14 9.3a6.5 6.5 0 1 1-4 0"/><path d="M5.52 16h12.96"/></svg> <span>Extract gibberish</span></div>
+                                        <div class="ld-select-option" data-ar="clean" onclick="setAutoResolveAction('clean')"><svg class="w-4 h-4 flex-shrink-0 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 16 5-5c.928-.893 2.072-.893 3 0l5 5"/><path d="m19 12-3-3c-.928-.893-2.072-.893-3 0l-1 1"/><circle cx="17.5" cy="6.5" r="1.5"/></svg> <span>Clean text only</span></div>
+                                        <div class="ld-select-option" data-ar="skip" onclick="setAutoResolveAction('skip')"><svg class="w-4 h-4 flex-shrink-0 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg> <span>Skip</span></div>
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+
+                        <!-- startup animation toggle -->
+                        <div class="mt-4" style="border-top:1px solid var(--border);padding-top:14px">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="settings-label" style="font-size:10px">Startup Loading Animation</p>
+                                    <p class="text-[10px] mt-0.5" style="color:var(--text-3)">Display morphing loading animation on app start</p>
+                                </div>
+                                <button id="animation-toggle-btn" onclick="toggleStartupAnimation()"
+                                    class="relative w-10 h-5 rounded-full transition-all duration-300 focus:outline-none flex-shrink-0"
+                                    style="background:var(--accent)" aria-label="Toggle startup animation">
+                                    <span id="animation-toggle-knob"
+                                        class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-all duration-300" style="transform:translateX(20px)"></span>
+                                </button>
                             </div>
                         </div>
 
@@ -715,6 +797,7 @@
                                 <div id="view-mode-pill" class="view-mode-pill">
                                     <button id="vm-raw" class="on" onclick="setViewMode('raw')">Raw</button>
                                     <button id="vm-rendered" onclick="setViewMode('rendered')">Rendered</button>
+                                    <button id="vm-pdf" onclick="setViewMode('pdf')">PDF</button>
                                     <button id="vm-split" onclick="setViewMode('split')">Split</button>
                                 </div>
 
@@ -763,16 +846,59 @@
 
                         </div><!-- /viewer-editor-header -->
 
+                            <div id="split-panel-controls" class="hidden">
+                                <div class="split-panel-side">
+                                    <div class="ld-custom-select split-custom-select" id="split-left-custom-select">
+                                        <div class="ld-select-display" onclick="toggleCustomSelect(this)">
+                                            <span class="ld-select-value" id="split-left-display"><svg class="w-4 h-4 flex-shrink-0 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg> <span>Left: Raw Markdown</span></span>
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                        </div>
+                                        <div class="ld-select-dropdown">
+                                            <div class="ld-select-option selected" data-split-side="left" data-value="raw" onclick="selectSplitOption('left', 'raw', this.innerHTML)"><svg class="w-4 h-4 flex-shrink-0 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg> <span>Left: Raw Markdown</span></div>
+                                            <div class="ld-select-option" data-split-side="left" data-value="rendered" onclick="selectSplitOption('left', 'rendered', this.innerHTML)"><svg class="w-4 h-4 flex-shrink-0 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg> <span>Left: Rendered Markdown</span></div>
+                                            <div class="ld-select-option" data-split-side="left" data-value="pdf" onclick="selectSplitOption('left', 'pdf', this.innerHTML)"><svg class="w-4 h-4 flex-shrink-0 text-rose-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> <span>Left: Original PDF</span></div>
+                                        </div>
+                                        <select id="split-left-select" style="display:none;" onchange="switchSplitPanel('left', this.value)">
+                                            <option value="raw" selected>Left: Raw</option>
+                                            <option value="rendered">Left: Rendered</option>
+                                            <option value="pdf">Left: Original PDF</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="split-panel-side">
+                                    <div class="ld-custom-select split-custom-select" id="split-right-custom-select">
+                                        <div class="ld-select-display" onclick="toggleCustomSelect(this)">
+                                            <span class="ld-select-value" id="split-right-display"><svg class="w-4 h-4 flex-shrink-0 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg> <span>Right: Rendered Markdown</span></span>
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                        </div>
+                                        <div class="ld-select-dropdown">
+                                            <div class="ld-select-option" data-split-side="right" data-value="raw" onclick="selectSplitOption('right', 'raw', this.innerHTML)"><svg class="w-4 h-4 flex-shrink-0 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg> <span>Right: Raw Markdown</span></div>
+                                            <div class="ld-select-option selected" data-split-side="right" data-value="rendered" onclick="selectSplitOption('right', 'rendered', this.innerHTML)"><svg class="w-4 h-4 flex-shrink-0 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg> <span>Right: Rendered Markdown</span></div>
+                                            <div class="ld-select-option" data-split-side="right" data-value="pdf" onclick="selectSplitOption('right', 'pdf', this.innerHTML)"><svg class="w-4 h-4 flex-shrink-0 text-rose-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> <span>Right: Original PDF</span></div>
+                                        </div>
+                                        <select id="split-right-select" style="display:none;" onchange="switchSplitPanel('right', this.value)">
+                                            <option value="raw">Right: Raw</option>
+                                            <option value="rendered" selected>Right: Rendered</option>
+                                            <option value="pdf">Right: Original PDF</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
 
-                        <div id="viewer-content-wrapper" class="flex-1 flex flex-col overflow-hidden gap-4">
-                            <!-- raw md -->
-                            <div id="viewer-md-container" class="flex-1"></div>
-                            <!-- editable md (left panel in split, full panel in edit) -->
-                            <div id="raw-markdown-block" class="hidden" style="flex:1;min-width:0"></div>
-                            <!-- draggable resizer — only shown in split mode -->
+                        <div id="viewer-content-wrapper" class="flex-1 flex flex-col overflow-hidden">
+                            <!-- Left panel candidates (always before resizer in split view) -->
+                            <div id="viewer-md-container" class="hidden"></div>
+                            <div id="split-rendered-left" class="hidden math-rendered"></div>
+                            <div id="split-pdf-left" class="hidden"><embed style="width:100%;height:100%;border:none;display:block;" type="application/pdf"></embed></div>
+                            <div id="raw-markdown-block" class="hidden"></div>
+                            <!-- Split divider -->
                             <div id="split-resizer" class="hidden"></div>
-                            <!-- rendered md (right panel in split, full panel in rendered) -->
-                            <div id="viewer-md-rendered" class="flex-1 hidden math-rendered"></div>
+                            <!-- Right panel candidates (always after resizer in split view) -->
+                            <div id="split-raw-right" class="hidden"></div>
+                            <div id="viewer-md-rendered" class="hidden math-rendered"></div>
+                            <div id="split-pdf-right" class="hidden"><embed style="width:100%;height:100%;border:none;display:block;" type="application/pdf"></embed></div>
+                            <!-- Single view containers -->
+                            <div id="viewer-pdf-container" class="hidden"><embed style="width:100%;height:100%;border:none;display:block;" type="application/pdf"></embed></div>
                             <!-- image view -->
                             <div id="viewer-img-container"
                                 class="hidden flex-1 flex flex-col items-center justify-center rounded-xl overflow-auto p-4"
@@ -1071,21 +1197,31 @@
 
     <!-- donation toast -->
     <div id="donation-toast"
-        class="fixed bottom-6 right-4 sm:right-6 translate-y-32 opacity-0 transition-all duration-500 z-50 p-4 rounded-2xl shadow-2xl max-w-[calc(100vw-32px)] sm:max-w-sm flex gap-4 items-start">
-        <img src="https://i.imgur.com/SyyLxS7.jpeg" class="w-10 h-10 rounded-full shrink-0"
+        class="fixed bottom-6 right-4 sm:right-6 translate-y-32 opacity-0 transition-all duration-500 z-50 p-5 rounded-2xl shadow-2xl max-w-[calc(100vw-32px)] sm:max-w-lg flex gap-4 items-start">
+        <img src="https://i.imgur.com/SyyLxS7.jpeg" class="w-11 h-11 rounded-full shrink-0 shadow-sm"
             style="border:1px solid var(--border)" alt="0xovo">
-        <div>
-            <h4 class="text-sm font-bold" style="color:var(--text-1)">Found this helpful?</h4>
-            <p class="text-[11px] mt-1 leading-relaxed" style="color:var(--text-2)">If LiteDoc saved you some time or
-                money, consider buying me a coffee!</p>
-            <div class="flex gap-3 mt-3 items-center">
+        <div class="flex-1 min-w-0">
+            <h4 class="text-sm font-bold" style="color:var(--text-1)">Found LiteDoc helpful?</h4>
+            <p class="text-[11px] mt-1 leading-relaxed" style="color:var(--text-2)">If LiteDoc saved you time or money, consider donating! If you can't donate, starring us on GitHub or sharing LiteDoc means the world to us!</p>
+            <div class="flex flex-wrap gap-2.5 mt-3.5 items-center">
                 <a href="https://ko-fi.com/0xovo" target="_blank"
-                    class="text-white text-xs font-bold px-4 py-1.5 rounded-full transition-colors flex items-center gap-1 shadow-lg"
+                    class="text-white text-xs font-bold px-3.5 py-1.5 rounded-full transition-all flex items-center gap-1.5 shadow-md hover:scale-105"
                     style="background:#FF5E5B">
                     ☕ Ko-fi
                 </a>
-                <button onclick="closeDonationToast()" class="text-[11px]" style="color:var(--text-3)">Maybe
-                    later</button>
+                <a href="https://github.com/0xovo/LiteDoc" target="_blank"
+                    class="text-white text-xs font-bold px-3.5 py-1.5 rounded-full transition-all flex items-center gap-1.5 shadow-md hover:scale-105"
+                    style="background:#24292f">
+                    <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+                    <span>Star on GitHub</span>
+                </a>
+                <button onclick="shareLiteDoc()"
+                    class="text-white text-xs font-bold px-3.5 py-1.5 rounded-full transition-all flex items-center gap-1.5 shadow-md hover:scale-105"
+                    style="background:#6366f1">
+                    <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/></svg>
+                    <span>Share</span>
+                </button>
+                <button onclick="closeDonationToast()" class="text-[11px] font-semibold ml-auto transition-colors hover:underline" style="color:var(--text-3)">Maybe later</button>
             </div>
         </div>
     </div>
@@ -1277,6 +1413,7 @@
             </div>
         </div>
     </div>
+    </div><!-- #main-app-content end -->
     <!-- LiteDoc Core Modules -->
     <script src="js/state.js"></script>
     <script src="js/terminal.js"></script>

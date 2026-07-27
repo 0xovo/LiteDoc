@@ -20,6 +20,7 @@ jobs:
 
       - name: Build package
         run: |
+          rm -rf cli/dist
           python -m pip install --upgrade build
           python -m build cli --outdir cli/dist
 
