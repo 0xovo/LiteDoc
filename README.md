@@ -17,7 +17,7 @@
 
 LiteDoc is **actively developed.** v3.2.0 is a major release — the CLI got enterprise automation (live folder watchers, page slicing, performance benchmarking, persistent config), the GUI got source-map provenance tracking, low-confidence OCR auditing, and split view panel selectors. The core extraction engine continues to improve with better scoring and bug fixes.
 
-The optional AI cleanup feature is temporarily offline — the cloud account hosting it was suspended with no explanation and an open-ended appeal process (see `RELEASE_NOTES.md` for the full story). This doesn't affect the core app: extraction has always run 100% in your browser, and the CLI works fully offline too. AI cleanup comes back the moment there's somewhere to host it again.
+The optional AI cleanup feature has been **retired**. The cloud account hosting it was suspended with no explanation and an open-ended appeal process (see `RELEASE_NOTES.md` for the full story), and it is not coming back. This doesn't affect the core app: extraction has always run 100% in your browser, and the CLI works fully offline too.
 
 The project is open source, so if you want to keep pushing on the parser or the training pipeline yourself, everything you need is in this repo — see [Training & Heuristic Optimization](#training--heuristic-optimization) below.
 
@@ -105,13 +105,15 @@ No dependencies, no server uploads, no privacy concerns. It runs entirely on you
 | **Mobile Responsive** | Full editor, document navigation, and settings available on any screen size. |
 | **Queue Control** | Pause or skip processing tasks. "Unformat" action strips markdown styling instantly. |
 
-### New: Optional AI Cleanup
+### Retired: Optional AI Cleanup
 
-LiteDoc now ships an opt-in **"Clean with AI"** feature: after the local parser extracts your document, an AI pass can fix leftover typos and OCR artifacts, stitch sentences broken across lines and pages, and re-align mangled tables into proper Markdown.
+LiteDoc briefly shipped an opt-in **"Clean with AI"** feature: after the local parser extracted your document, an AI pass could fix leftover typos and OCR artifacts, stitch sentences broken across lines and pages, and re-align mangled tables into proper Markdown.
 
-- **Still 100% local by default** — the AI pass is the *only* feature that talks to a server, and only for the document you explicitly send. Everything else stays in your browser, same as always.
-- **Private by design** — documents are processed in memory and never written to disk, stored, or logged. Accounts are username + password only; we never ask for an email.
-- **How it's funded** — AI cleanup runs on tokens purchased as gift codes from the [Ko-fi shop](https://ko-fi.com/0xovo/shop). This add-on exists so supporting the project isn't a one-way street: donors get something genuinely useful back, and every purchase keeps the servers running.
+**It has been retired and is no longer available.** The cloud account hosting it was suspended, and it is not being brought back.
+
+- **The core app is unaffected** — the AI pass was the *only* feature that ever talked to a server. Everything else runs in your browser, same as always, and the CLI works fully offline.
+- **Private by design** — documents were processed in memory and never written to disk, stored, or logged.
+- **LiteDoc sells nothing.** The project is free and open-source, funded entirely by voluntary [Ko-fi](https://ko-fi.com/0xovo) donations.
 
 ## The CLI
 
