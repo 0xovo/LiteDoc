@@ -4,6 +4,7 @@
 
  [![Try it Live](https://img.shields.io/badge/🚀_Try_LiteDoc_Live-litedoc.xyz-6366f1?style=for-the-badge)](https://litedoc.xyz/)
  [![GitHub stars](https://img.shields.io/github/stars/0xovo/LiteDoc?style=for-the-badge&color=eab308)](https://github.com/0xovo/LiteDoc/stargazers)
+ [![License: MIT](https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge)](LICENSE)
  [![Twitter Follow](https://img.shields.io/badge/Follow_@0xovoo-000000?style=for-the-badge&logo=x&logoColor=white)](https://x.com/0xovoo)
 
  <br />
@@ -213,6 +214,10 @@ LiteDoc implements a robust Gibberish Scorer to identify heavily corrupted, cust
 Contributions, issues, and feature requests are highly welcome! Since the goal is to keep the tool accessible and server-free, any PRs should adhere to the "100% client-side" philosophy.
 
 **A Note on Future Updates:** Up until now, bugs and algorithmic edge-cases have been tracked manually by the maintainer. Because I currently don't have anyone actively opening issues on the repository, **future updates will be rolling out at a slower pace**. If you find a bug or want a feature, *please open an issue!* It is the best way to drive the next wave of development.
+
+## License
+
+LiteDoc is released under the [MIT License](LICENSE). You can use it, modify it and ship it inside your own products, commercial ones included. Just keep the copyright notice.
 
 ## Connect
 

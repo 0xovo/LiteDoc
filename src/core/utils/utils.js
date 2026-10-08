@@ -53,10 +53,20 @@ const SUSPICIOUS_BUCKETS = new Set([
 ]);
 
 // corruption detector
+// A lone bullet glyph: Wingdings/Symbol fonts put list markers in the Private
+// Use Area (U+F0A7, U+F0FC ...). One isolated PUA char is a list marker, not a broken encoding.
+function isSymbolGlyph(str) {
+    const t = (str || '').trim();
+    if ([...t].length !== 1) return false;
+    const cp = t.codePointAt(0);
+    return (cp >= 0xE000 && cp <= 0xF8FF) || '\u2022\u25AA\u25AB\u25CF\u25E6\u25A0\u25A1\u2023\u2043\u27A2\u2756\u25BA\u2713\u2714'.includes(t);
+}
+
 function detectCorruptedFonts(rawItems) {
     // group by font
     const byFont = {};
     for (const item of rawItems) {
+        if (isSymbolGlyph(item.str)) continue;
         const fn = item.fontName || '__unknown__';
         if (!byFont[fn]) byFont[fn] = { chars: 0, suspicious: 0, buckets: new Set() };
         const entry = byFont[fn];
@@ -135,6 +145,9 @@ function joinLineItems(items, config) {
     
     // sort x, skip whitespace-only items
     const validItems = items.filter(it => it.str && it.str.trim());
+    // The PDF's own space glyphs: a space item sitting between two runs is a real word
+    // break even when the measured gap is under the threshold ("BasicNetworking").
+    const spaceSpans = items.filter(it => it.str && !it.str.trim()).map(it => [it.x, it.x + (it.width || 0)]);
     if (!validItems.length) return '';
     const sorted = [...validItems].sort((a, b) => a.x - b.x);
     let result = sorted[0].str;
@@ -154,7 +167,8 @@ function joinLineItems(items, config) {
         const isSuperSub = (curr.height < prev.height * 0.75 || prev.height < curr.height * 0.75) && Math.abs((curr.y || 0) - (prev.y || 0)) > 1;
 
         // space insert
-        let needSpace = gap > spaceThreshold && !result.endsWith(' ') && !curr.str.startsWith(' ');
+        const explicitSpace = spaceSpans.some(([s0, s1]) => s0 >= prevRight - 1 && s1 <= curr.x + 1);
+        let needSpace = (gap > spaceThreshold || explicitSpace) && !result.endsWith(' ') && !curr.str.startsWith(' ');
         if (isDropCap || isSuperSub) {
             needSpace = false;
         }
@@ -271,7 +285,7 @@ function buildFingerprintSet(allPageLines, totalPages) {
     return repeating;
 }
 
-export { scriptBucket, detectCorruptedFonts, itemGibberishScore, joinLineItems, detectColumnSplit, classifyHeadings, headingLevel, buildFingerprintSet };
+export { scriptBucket, isSymbolGlyph, detectCorruptedFonts, itemGibberishScore, joinLineItems, detectColumnSplit, classifyHeadings, headingLevel, buildFingerprintSet };
 
 // global ace sync flag removed - consolidated in state.js
 

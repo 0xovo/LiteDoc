@@ -437,7 +437,7 @@ async function processTableLines(linesToProcess, ctx, columnLabel, tableState) {
                 finalCols.push(c);
             }
         }
-        const numCols = finalCols.length;
+        let numCols = finalCols.length;
         if (numCols < 2) continue;
 
         // NEW: Column consistency gate
@@ -461,6 +461,7 @@ async function processTableLines(linesToProcess, ctx, columnLabel, tableState) {
 
         const grid = [];
         let overlapCount = 0;
+        const colExt = Array.from({ length: numCols }, () => ({ min: Infinity, max: -Infinity }));
 
         for (const line of blockLines) {
             const rowData = Array(numCols).fill('');
@@ -485,15 +486,26 @@ async function processTableLines(linesToProcess, ctx, columnLabel, tableState) {
                 
                 if (endCol > bestCol) {
                     overlapCount += (endCol - bestCol);
-                    rowData[bestCol] += (rowData[bestCol] ? ' ' : '') + cell.str;
+                    rowData[bestCol] += (rowData[bestCol] ? ' ' : '') + cell.str; colExt[bestCol].min = Math.min(colExt[bestCol].min, cell.xMin); colExt[bestCol].max = Math.max(colExt[bestCol].max, cell.xMax);
                     for (let span = bestCol + 1; span <= endCol; span++) {
                         rowData[span] = ''; 
                     }
                 } else {
-                    rowData[bestCol] += (rowData[bestCol] ? ' ' : '') + cell.str;
+                    rowData[bestCol] += (rowData[bestCol] ? ' ' : '') + cell.str; colExt[bestCol].min = Math.min(colExt[bestCol].min, cell.xMin); colExt[bestCol].max = Math.max(colExt[bestCol].max, cell.xMax);
                 }
             }
             grid.push({ rowData, line });
+        }
+        // Right-aligned columns: a header and its numbers share a right edge but not a left
+        // edge, so they landed in two half-empty columns. Merge neighbours that no row uses
+        // together and whose cells overlap horizontally.
+        for (let c = numCols - 2; c >= 0; c--) {
+            const exclusive = grid.every(r => !(r.rowData[c].trim() && r.rowData[c + 1].trim()));
+            const overlap = colExt[c].max >= colExt[c + 1].min && colExt[c + 1].max >= colExt[c].min;
+            if (!exclusive || !overlap) continue;
+            for (const r of grid) r.rowData.splice(c, 2, (r.rowData[c] + ' ' + r.rowData[c + 1]).trim());
+            colExt.splice(c, 2, { min: Math.min(colExt[c].min, colExt[c + 1].min), max: Math.max(colExt[c].max, colExt[c + 1].max) });
+            numCols--;
         }
 
         let filledCount = 0;

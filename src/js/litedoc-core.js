@@ -54,11 +54,21 @@ var LiteDocCore = (function () {
         'misc-symbols', 'control-pics'
     ]);
 
+    // A lone bullet glyph: Wingdings/Symbol fonts put list markers in the Private
+    // Use Area (U+F0A7, U+F0FC ...). One isolated PUA char is a list marker, not a broken encoding.
+    function isSymbolGlyph(str) {
+        const t = (str || '').trim();
+        if ([...t].length !== 1) return false;
+        const cp = t.codePointAt(0);
+        return (cp >= 0xE000 && cp <= 0xF8FF) || '\u2022\u25AA\u25AB\u25CF\u25E6\u25A0\u25A1\u2023\u2043\u27A2\u2756\u25BA\u2713\u2714'.includes(t);
+    }
+
     // corruption detector
     function detectCorruptedFonts(rawItems) {
         // group by font
         const byFont = {};
         for (const item of rawItems) {
+            if (isSymbolGlyph(item.str)) continue;
             const fn = item.fontName || '__unknown__';
             if (!byFont[fn]) byFont[fn] = { chars: 0, suspicious: 0, buckets: new Set() };
             const entry = byFont[fn];
@@ -137,6 +147,9 @@ var LiteDocCore = (function () {
         
         // sort x, skip whitespace-only items
         const validItems = items.filter(it => it.str && it.str.trim());
+        // The PDF's own space glyphs: a space item sitting between two runs is a real word
+        // break even when the measured gap is under the threshold ("BasicNetworking").
+        const spaceSpans = items.filter(it => it.str && !it.str.trim()).map(it => [it.x, it.x + (it.width || 0)]);
         if (!validItems.length) return '';
         const sorted = [...validItems].sort((a, b) => a.x - b.x);
         let result = sorted[0].str;
@@ -156,7 +169,8 @@ var LiteDocCore = (function () {
             const isSuperSub = (curr.height < prev.height * 0.75 || prev.height < curr.height * 0.75) && Math.abs((curr.y || 0) - (prev.y || 0)) > 1;
 
             // space insert
-            let needSpace = gap > spaceThreshold && !result.endsWith(' ') && !curr.str.startsWith(' ');
+            const explicitSpace = spaceSpans.some(([s0, s1]) => s0 >= prevRight - 1 && s1 <= curr.x + 1);
+            let needSpace = (gap > spaceThreshold || explicitSpace) && !result.endsWith(' ') && !curr.str.startsWith(' ');
             if (isDropCap || isSuperSub) {
                 needSpace = false;
             }
@@ -619,7 +633,7 @@ var LiteDocCore = (function () {
                     finalCols.push(c);
                 }
             }
-            const numCols = finalCols.length;
+            let numCols = finalCols.length;
             if (numCols < 2) continue;
 
             // NEW: Column consistency gate
@@ -643,6 +657,7 @@ var LiteDocCore = (function () {
 
             const grid = [];
             let overlapCount = 0;
+            const colExt = Array.from({ length: numCols }, () => ({ min: Infinity, max: -Infinity }));
 
             for (const line of blockLines) {
                 const rowData = Array(numCols).fill('');
@@ -667,15 +682,26 @@ var LiteDocCore = (function () {
                     
                     if (endCol > bestCol) {
                         overlapCount += (endCol - bestCol);
-                        rowData[bestCol] += (rowData[bestCol] ? ' ' : '') + cell.str;
+                        rowData[bestCol] += (rowData[bestCol] ? ' ' : '') + cell.str; colExt[bestCol].min = Math.min(colExt[bestCol].min, cell.xMin); colExt[bestCol].max = Math.max(colExt[bestCol].max, cell.xMax);
                         for (let span = bestCol + 1; span <= endCol; span++) {
                             rowData[span] = ''; 
                         }
                     } else {
-                        rowData[bestCol] += (rowData[bestCol] ? ' ' : '') + cell.str;
+                        rowData[bestCol] += (rowData[bestCol] ? ' ' : '') + cell.str; colExt[bestCol].min = Math.min(colExt[bestCol].min, cell.xMin); colExt[bestCol].max = Math.max(colExt[bestCol].max, cell.xMax);
                     }
                 }
                 grid.push({ rowData, line });
+            }
+            // Right-aligned columns: a header and its numbers share a right edge but not a left
+            // edge, so they landed in two half-empty columns. Merge neighbours that no row uses
+            // together and whose cells overlap horizontally.
+            for (let c = numCols - 2; c >= 0; c--) {
+                const exclusive = grid.every(r => !(r.rowData[c].trim() && r.rowData[c + 1].trim()));
+                const overlap = colExt[c].max >= colExt[c + 1].min && colExt[c + 1].max >= colExt[c].min;
+                if (!exclusive || !overlap) continue;
+                for (const r of grid) r.rowData.splice(c, 2, (r.rowData[c] + ' ' + r.rowData[c + 1]).trim());
+                colExt.splice(c, 2, { min: Math.min(colExt[c].min, colExt[c + 1].min), max: Math.max(colExt[c].max, colExt[c + 1].max) });
+                numCols--;
             }
 
             let filledCount = 0;
@@ -1749,6 +1775,21 @@ var LiteDocCore = (function () {
                         const pageHasCorruption = corruptedFonts.size > 0;
 
                         if (fontMode === 'render' && pageHasCorruption) {
+                            // "Render pages as images": the text layer can't be trusted, so ship the page
+                            // itself. Dropping it (the old behaviour) silently lost whole slides.
+                            const rvp = page.getViewport({ scale: 2.0 });
+                            const rc = document.createElement('canvas');
+                            rc.width = rvp.width; rc.height = rvp.height;
+                            const rctx = rc.getContext('2d');
+                            rctx.fillStyle = '#ffffff';
+                            rctx.fillRect(0, 0, rc.width, rc.height);
+                            await page.render({ canvasContext: rctx, viewport: rvp }).promise;
+                            const rName = `${file.name.replace(/\.pdf$/i, '')}_p${pageNum}_page.jpg`;
+                            extractedImages.push({ name: rName, dataUrl: rc.toDataURL('image/jpeg', 0.9), dims: `${Math.round(rc.width)}×${Math.round(rc.height)}`, page: pageNum });
+                            rc.width = 0; rc.height = 0;
+                            mdText += (pageNum > 1 ? '\n\n---\n\n' : '') + `## Page ${pageNum}\n\n![Page ${pageNum}](${rName})`;
+                            lowConfidencePages.push({ page: pageNum, confidence: 'low', reasons: ['Unreadable font encoding: page kept as an image'] });
+                            logToTerminal(`[Page ${pageNum}/${pdfDoc.numPages}] Font encoding unreadable; page rendered as an image.`, 'warn');
                             page.cleanup(); continue;
                         }
 
@@ -1763,7 +1804,11 @@ var LiteDocCore = (function () {
                                 const isBold = (item.fontName || '').toLowerCase().includes('bold');
                                 const fontName = item.fontName || '__unknown__';
                                 const score = itemGibberishScore(item.str, fontName, effectiveCorruptedFonts);
-                                const isMarginNoise = f > pageH * 0.96 || f < pageH * 0.04 || e < pageW * 0.04 || e > pageW * 0.96;
+                                // Only page counters and sideways stamps count as margin noise. Dropping every glyph in
+                                // the outer 4% erased real content on tight pages (a receipt's store name). Repeating
+                                // running headers/footers are removed separately by the fingerprint pass.
+                                const inMargin = f > pageH * 0.96 || f < pageH * 0.04 || e < pageW * 0.04 || e > pageW * 0.96;
+                                const isMarginNoise = inMargin && (Math.abs(b) > 0.01 || /^[\s\divxlcIVXLC.\-–—\/|]*$/.test(item.str) || item.str.trim().length <= 2);
                                 return {
                                     str: item.str, x: e, y: f, width, height: item.height || Math.abs(a) || 12,
                                     fontSize, isBold, fontName,
@@ -1772,6 +1817,8 @@ var LiteDocCore = (function () {
                                 };
                             });
 
+                        // Lone symbol-font glyphs (Wingdings  etc.) are list markers: keep them as bullets.
+                        for (const it of rawItems) if (isSymbolGlyph(it.str)) { it.str = '\u2022'; it.isBullet = true; it.garbage = false; it.gScore = 0; }
                         const items = [];
                         for (const item of rawItems) {
                             const isDup = items.some(existing => {
@@ -1855,27 +1902,41 @@ var LiteDocCore = (function () {
 
                         function groupItemsIntoLines(itemList) {
                             itemList.sort((a, b) => b.y - a.y || a.x - b.x);
-                            const lines = [];
+                            // Band by height first, then split each band on wide horizontal gaps. Doing both in
+                            // one top-to-bottom pass broke rows whose glyphs jitter by a pixel (column sums):
+                            // that order zig-zags in x, so a mid-row glyph looked like a far-away new line.
+                            const bands = [];
                             for (const item of itemList) {
-                                const last = lines[lines.length - 1];
+                                const band = bands[bands.length - 1];
                                 const ocrTolMultiplier = item.isOcr ? (activeConfig$1.ocrTolMultiplier ?? 4.0) : 1.0;
                                 const tol = Math.max(3, (item.height || 10) * (activeConfig$1.rowSplitMultiplier / 6.6)) * ocrTolMultiplier;
-                                let isSameLine = false;
-                                if (last && Math.abs(item.y - last.lastY) <= tol) {
-                                    const gap = item.x - last.xMax;
-                                    if (gap < (item.height || 10) * 1.5) isSameLine = true;
+                                if (band && Math.abs(item.y - band.lastY) <= tol) { band.items.push(item); band.lastY = item.y; }
+                                else bands.push({ items: [item], lastY: item.y });
+                            }
+                            const lines = [];
+                            for (const band of bands) {
+                                const open = []; // lines of this band, each still able to take glyphs on its right
+                                for (const item of [...band.items].sort((a, b) => a.x - b.x)) {
+                                    const ocrTolMultiplier = item.isOcr ? (activeConfig$1.ocrTolMultiplier ?? 4.0) : 1.0;
+                                    const tol = Math.max(3, (item.height || 10) * (activeConfig$1.rowSplitMultiplier / 6.6)) * ocrTolMultiplier;
+                                    // Same row = close in height to the line's first glyph (a band can chain several
+                                    // diagram labels together) and no wide horizontal gap.
+                                    const line = open.find(l => Math.abs(item.y - l.y) <= tol && item.x - l.xMax < (item.height || 10) * 1.5);
+                                    if (line) {
+                                        line.items.push(item);
+                                        if (item.garbage) line.garbage = true;
+                                        line.xMax = Math.max(line.xMax, item.x + (item.width || 0));
+                                        line.lastY = Math.min(line.lastY, item.y);
+                                    } else {
+                                        const created = {
+                                            y: item.y, lastY: item.y, height: item.height, fontSize: item.fontSize, isBold: item.isBold,
+                                            items: [item], garbage: item.garbage, xMin: item.x, xMax: item.x + (item.width || 0),
+                                        };
+                                        open.push(created);
+                                    }
                                 }
-                                if (isSameLine) {
-                                    last.items.push(item);
-                                    if (item.garbage) last.garbage = true;
-                                    last.xMax = Math.max(last.xMax, item.x + item.width);
-                                    last.lastY = item.y;
-                                } else {
-                                    lines.push({
-                                        y: item.y, lastY: item.y, height: item.height, fontSize: item.fontSize, isBold: item.isBold,
-                                        items: [item], garbage: item.garbage, xMin: item.x, xMax: item.x + (item.width || 0),
-                                    });
-                                }
+                                open.sort((a, b) => b.y - a.y || a.xMin - b.xMin);
+                                lines.push(...open);
                             }
                             for (const lg of lines) {
                                 const lineStr = lg.items.map(it => it.str).join('');
@@ -2017,17 +2078,75 @@ var LiteDocCore = (function () {
                                 tableBuffer = []; tableColsBounds = [];
                             };
                             const flushPara = () => { if (paragraphBuf.trim()) { mdArr.push(paragraphBuf.trim()); paragraphBuf = ''; } };
+                            // Bullet indents on this block, left to right: the position is the nesting depth.
+                            const bulletXs = [];
+                            for (const l of lines) {
+                                const lead = l.items.filter(it => !it.garbage && (it.str || '').trim()).sort((a, b) => a.x - b.x)[0];
+                                if (lead && lead.isBullet && !bulletXs.some(x => Math.abs(x - lead.x) < 6)) bulletXs.push(lead.x);
+                            }
+                            bulletXs.sort((a, b) => a - b);
+                            let listItem = null; // { idx, textX } of the open list item, for wrapped lines
+                            // Worked column arithmetic arrives one glyph per item ("1" "0" "+"). Each row must stay
+                            // a row and each digit in its column, or a sum silently changes, so emit a preformatted block.
+                            let arithBuf = [];
+                            const isArithLine = (glyphs) => glyphs.length >= (arithBuf.length ? 1 : 2) &&
+                                glyphs.every(it => /^[0-9+\-=×÷*\/.,]$/.test(it.str.trim()));
+                            const flushArith = () => {
+                                if (!arithBuf.length) return;
+                                const all = arithBuf.flat();
+                                // Column pitch = median distance between neighbouring glyphs; one pitch = 2 chars.
+                                const steps = arithBuf.flatMap(g => g.slice(1).map((it, k) => it.x - g[k].x)).filter(d => d > 1).sort((a, b) => a - b);
+                                const unit = (steps[Math.floor(steps.length / 2)] || 20) / 2;
+                                const x0 = Math.min(...all.map(it => it.x));
+                                const rows = arithBuf.map(glyphs => {
+                                    let row = '';
+                                    for (const it of glyphs) {
+                                        const col = Math.round((it.x - x0) / unit);
+                                        row += (row.length < col ? ' '.repeat(col - row.length) : (row ? ' ' : '')) + it.str.trim();
+                                    }
+                                    return row;
+                                });
+                                mdArr.push('', '```', ...rows, '```', '');
+                                arithBuf = [];
+                            };
 
                             for (const lg of lines) {
                                 // Content injected by the enhancement pass (grid tables,
                                 // figures, math) anchored to this line — emit it in place.
                                 if (lg.injectedMarkdown && lg.injectedMarkdown.trim()) {
-                                    flushPara(); flushTable();
+                                    flushArith(); flushPara(); flushTable();
                                     mdArr.push(lg.injectedMarkdown.trim());
                                     lg.injectedMarkdown = '';
                                 }
                                 const sortedItems = [...lg.items.filter(it => !it.garbage)].sort((a, b) => a.x - b.x);
                                 if (sortedItems.length === 0) continue;
+                                const arithGlyphs = sortedItems.filter(it => (it.str || '').trim());
+                                if (isArithLine(arithGlyphs)) {
+                                    flushTable(); flushPara();
+                                    arithBuf.push(arithGlyphs);
+                                    prevY = lg.y; prevLine = lg; continue;
+                                }
+                                flushArith();
+                                const bulletLead = sortedItems[0].isBullet ? sortedItems[0] : null;
+                                const lineTextItems = sortedItems.filter(it => (it.str || '').trim());
+                                if (bulletLead && lineTextItems.length > 1) {
+                                    flushTable(); flushPara();
+                                    if (!listItem && mdArr.length && mdArr[mdArr.length - 1] !== '') mdArr.push('');
+                                    const depth = Math.max(0, bulletXs.findIndex(x => Math.abs(x - bulletLead.x) < 6));
+                                    mdArr.push('  '.repeat(depth) + '- ' + joinLineItems(sortedItems.filter(it => it !== bulletLead), activeConfig$1).trim());
+                                    listItem = { idx: mdArr.length - 1, textX: lineTextItems[1].x };
+                                    prevY = lg.y; prevLine = lg; continue;
+                                }
+                                if (listItem) {
+                                    // A wrapped line of the open item starts under its text, not under the bullet.
+                                    const wrapped = Math.abs(sortedItems[0].x - listItem.textX) < 12 && prevY !== null && (prevY - lg.y) < medH * activeConfig$1.continuationGapThreshold;
+                                    if (wrapped) {
+                                        mdArr[listItem.idx] += ' ' + joinLineItems(sortedItems, activeConfig$1).trim();
+                                        prevY = lg.y; prevLine = lg; continue;
+                                    }
+                                    listItem = null;
+                                    mdArr.push('');
+                                }
 
                                 let cols = [], curCol = [], hasHugeGap = false;
                                 for (let i = 0; i < sortedItems.length; i++) {
@@ -2077,9 +2196,12 @@ var LiteDocCore = (function () {
                                     flushPara(); tableBuffer.push(rowCells);
                                 } else {
                                     flushTable();
-                                    let txt = lg.text.trim();
+                                    // From the live glyphs, not the cached lg.text: the table pass consumes glyphs
+                                    // after lg.text was built, and the cache printed consumed rows a second time.
+                                    let txt = joinLineItems(sortedItems, activeConfig$1).trim();
                                     if (!txt) continue;
-                                    let level = headingLevel(lg.fontSize, hThresh, lg.isBold);
+                                    // A line with no letters (digit rows in worked sums, page counters) is never a heading.
+                                    let level = /\p{L}/u.test(txt) ? headingLevel(lg.fontSize, hThresh, lg.isBold) : 0;
                                     if (level > 0) { flushPara(); mdArr.push('#'.repeat(4-level) + ' ' + txt); }
                                     else {
                                         const gap = prevY !== null ? (prevY - lg.y) : 0;
@@ -2090,7 +2212,7 @@ var LiteDocCore = (function () {
                                 }
                                 prevY = lg.y; prevLine = lg;
                             }
-                            flushPara(); flushTable(); return mdArr;
+                            flushArith(); flushPara(); flushTable(); return mdArr;
                         }
 
                         let pageMdLines = [];

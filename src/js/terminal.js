@@ -187,6 +187,10 @@ Total Files Completed: ${meta.processedCount}
 
 function toggleTerminalModal() {
     const el = document.getElementById('terminal-modal');
+    // #main-app-content carries a transform, which turns position:fixed into
+    // "fixed to that container": the backdrop covered the page but the card sat
+    // off-screen. Living under <body> pins it to the viewport.
+    if (el.parentElement !== document.body) document.body.appendChild(el);
     if (el.classList.contains('hidden')) {
         el.classList.remove('hidden');
         el.classList.add('flex');
@@ -197,6 +201,14 @@ function toggleTerminalModal() {
         document.body.style.overflow = '';
     }
 }
+
+document.addEventListener('keydown', (e) => {
+    const el = document.getElementById('terminal-modal');
+    if (e.key === 'Escape' && el && !el.classList.contains('hidden')) toggleTerminalModal();
+});
+document.getElementById('terminal-modal')?.addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) toggleTerminalModal();
+});
 
 window.logToTerminal = logToTerminal;
 window.reportIssue = reportIssue;

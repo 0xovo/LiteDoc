@@ -5,6 +5,9 @@
 
 // 3. Safely Mount Modules on Boot
 document.addEventListener('DOMContentLoaded', async () => {
+    // build.py stamps window.LITEDOC_VERSION; the nav label used to be hardcoded and went stale.
+    const verEl = document.getElementById('app-version');
+    if (verEl && window.LITEDOC_VERSION) verEl.textContent = `Version ${window.LITEDOC_VERSION}`;
     console.log('[Boot] Mounting LiteDoc sub-modules...');
 
     // 0. (Service Worker registration removed for standalone HTML release)
@@ -88,7 +91,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             overlay.remove();
             if (mainApp) {
                 mainApp.style.opacity = '1';
-                mainApp.style.transform = 'scale(1)';
+                mainApp.style.transform = 'none';
                 mainApp.style.position = 'static';
                 mainApp.style.pointerEvents = 'auto';
             }
@@ -165,6 +168,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                                     mainApp.style.position = '';
                                     mainApp.style.overflow = '';
                                     mainApp.style.inset = '';
+                                    // A leftover transform (even scale(1)) makes every
+                                    // position:fixed child (log modal, toasts) anchor to
+                                    // this container instead of the viewport.
+                                    mainApp.classList.remove('scale-100', 'transition-all');
+                                    mainApp.style.transition = 'none';
+                                    mainApp.style.transform = 'none';
                                 }
                             }, 500); // Wait for expand transition
                         }, 200); // Duration of text fade

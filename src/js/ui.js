@@ -404,6 +404,9 @@ function fontAlertChoice(choice) {
 
 // Donation Toast
 function showDonationToast() {
+    // The benchmark drives the real conversion pipeline; its synthetic runs aren't a user finishing a job.
+    const bench = document.getElementById('benchmark-view');
+    if (bench && !bench.classList.contains('hidden')) return;
     const t = document.getElementById('donation-toast');
     if (t) { t.classList.remove('translate-y-32', 'opacity-0'); t.classList.add('translate-y-0', 'opacity-100'); }
 }
