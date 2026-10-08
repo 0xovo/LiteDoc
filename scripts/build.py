@@ -37,7 +37,7 @@ JS_PREFERRED_ORDER  = [
     "js/pdf-parser.js",
     "js/ocr.js", "js/file-tree.js", "js/dropzone.js", "js/reset-utils.js",
     "js/downloads.js", "js/mobile-ux.js", "js/addons.js", "js/demo.js",
-    "js/litedoc-core.js", "js/benchmark.js",
+    "js/litedoc-core.js", "js/benchmark.js", "js/ads.js",
     "js/main.js",  # must stay last
 ]
 
@@ -214,7 +214,12 @@ def inline_into_html(html: str, css_blob: str, js_blob: str, version: str, ai_wi
             log(WARN, f"dropped dev-only stylesheet (never inlined into dist): {url}")
             return ""
         c = fetch_url(url)
-        if c: remote_css.append(f"/* {url} */\n{c}")
+        if c:
+            # Inlined, a relative url() (KaTeX's "fonts/...") resolves against OUR domain:
+            # the fonts 404'd into the 1 MB app shell. Point them back at the CDN.
+            c = re.sub(r'url\((["\']?)(?![a-z]+:|/|#)([^)"\']+)\1\)',
+                       lambda u: f'url({u.group(1)}{urllib.parse.urljoin(url, u.group(2))}{u.group(1)})', c)
+            remote_css.append(f"/* {url} */\n{c}")
         return ""
     html = remote_link.sub(fetch_link, html)
 

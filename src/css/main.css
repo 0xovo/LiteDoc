@@ -2063,3 +2063,12 @@ body:not(.is-editing) #viewer-util-group {
     }
 }
 
+
+/* Sponsor slot (js/ads.js): under the drop zone, beside the tall settings column.
+   Row 1 sizes to the drop zone; the flexible row 2 absorbs the settings height. */
+@media (min-width: 1024px) {
+    .main-grid { grid-template-rows: auto 1fr; }
+    .main-grid > :first-child { grid-row: span 2; }
+    #ld-ad { align-self: start; }
+}
+#ld-ad:empty { display: none; }

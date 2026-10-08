@@ -46,6 +46,10 @@
         order: 2;
     }
 
+    .main-grid #ld-ad {
+        order: 3;
+    }
+
     /* Collapsible cards on mobile */
     .m-collapsible>.m-collapse-body {
         display: none;
@@ -662,6 +666,7 @@
     body.m-focus-mode .author-card-wrap,
     body.m-focus-mode .settings-card,
     body.m-focus-mode #drop-zone,
+    body.m-focus-mode #ld-ad,
     body.m-focus-mode .faq-section,
     body.m-focus-mode #tab-preview-content > :not(#viewer-card) {
         display: none !important;
