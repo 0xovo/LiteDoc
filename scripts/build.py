@@ -72,17 +72,40 @@ def is_dev_only_url(url: str) -> bool:
     """
     return (urllib.parse.urlparse(url).hostname or "") in DEV_ONLY_HOSTS
 
-def fetch_url(url: str) -> str:
+# Pinned third-party artifact fetched at build time. The version is exact,
+# never a floating tag, and the bytes are verified against this recorded
+# SHA-256 on every build, cache hits included. A mismatch aborts the build
+# instead of silently inlining whatever the CDN or the cache handed back.
+# The hash below is the SHA-256 of the tracked src/vendor/tesseract.min.js
+# (Tesseract.js 7.0.0), verified byte-identical to the CDN artifact.
+TESSERACT_URL = "https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js"
+TESSERACT_SHA256 = "000c27d9cd0def655f77b36c72a389c0ab13793aa31cb4d7aab56d09c0afbc7e"
+
+def verify_sha256(url: str, data: str, expected: str) -> None:
+    actual = hashlib.sha256(data.encode("utf-8")).hexdigest()
+    if actual != expected:
+        log(ERR, f"SHA-256 mismatch for {url}")
+        log(ERR, f"  expected: {expected}")
+        log(ERR, f"  actual:   {actual}")
+        log(ERR, "Build aborted: fetched bytes do not match the recorded hash.")
+        sys.exit(1)
+
+def fetch_url(url: str, expected_sha256: str = None) -> str:
     CACHE_DIR.mkdir(exist_ok=True)
     key = CACHE_DIR / f"{hashlib.md5(url.encode()).hexdigest()}.txt"
     if key.exists():
         log(INFO, f"cache hit: {url}")
-        return key.read_text(encoding="utf-8", errors="ignore")
+        data = key.read_text(encoding="utf-8", errors="ignore")
+        if expected_sha256:
+            verify_sha256(url, data, expected_sha256)
+        return data
     log(INFO, f"downloading: {url}")
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req) as r:
             data = r.read().decode("utf-8", errors="ignore")
+        if expected_sha256:
+            verify_sha256(url, data, expected_sha256)
         key.write_text(data, encoding="utf-8")
         return data
     except Exception as e:
@@ -469,7 +492,7 @@ def build():
     # Tesseract — just prepend the library, let it fetch worker/core from CDN
     # to avoid "NetworkError: Failed to execute 'importScripts' on 'WorkerGlobalScope'"
     # which happens when a data URI worker tries to load relative WASM scripts.
-    tess_lib = safe_js(fetch_url("https://cdn.jsdelivr.net/npm/tesseract.js@7/dist/tesseract.min.js"))
+    tess_lib = safe_js(fetch_url(TESSERACT_URL, TESSERACT_SHA256))
     if tess_lib:
         js_blob = tess_lib + "\n\n" + js_blob
         log(OK, "Tesseract library inlined (worker/core will fetch from CDN)")
