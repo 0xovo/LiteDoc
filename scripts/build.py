@@ -289,6 +289,39 @@ def inline_into_html(html: str, css_blob: str, js_blob: str, version: str, ai_wi
         log(ERR, f"vendor file(s) missing, still referenced externally: {', '.join(vendor_missing)}")
     log(INFO, f"inlined {n_vendor[0]} vendor script(s)")
 
+    # Inline local <img src="assets/..."> as data URIs, in place.
+    #
+    # dist/ ships one self-contained file, so a relative image path would
+    # 404 exactly like the old vendor scripts did. The creator banner,
+    # avatar and font alert photo used to be hotlinked from Imgur; Imgur
+    # answers 403 to hotlinking now, so the images live in src/assets/ and
+    # are embedded here instead. A missing file is a build error, never a
+    # silently external reference.
+    local_img = re.compile(
+        r'(<img\b[^>]*?\bsrc=["\'])(assets/[^"\']+)(["\'])',
+        re.IGNORECASE)
+    img_mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                ".png": "image/png", ".webp": "image/webp",
+                ".gif": "image/gif", ".svg": "image/svg+xml"}
+    n_imgs = [0]
+    img_missing = []
+    def inline_img(m):
+        rel = m.group(2)
+        p = SRC_DIR / rel
+        mime = img_mime.get(p.suffix.lower())
+        if not p.exists() or mime is None:
+            img_missing.append(rel)
+            return m.group(0)
+        n_imgs[0] += 1
+        return (m.group(1)
+                + f"data:{mime};base64,"
+                + base64.b64encode(p.read_bytes()).decode()
+                + m.group(3))
+    html = local_img.sub(inline_img, html)
+    if img_missing:
+        log(ERR, f"local image(s) missing or unsupported, still referenced externally: {', '.join(img_missing)}")
+    log(INFO, f"inlined {n_imgs[0]} local image(s)")
+
     local_script = re.compile(
         r'<script\b[^>]*src=["\'](?!https?://|vendor/)([^"\']+)["\'][^>]*>\s*</script>',
         re.IGNORECASE)
