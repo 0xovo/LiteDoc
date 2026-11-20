@@ -416,7 +416,7 @@ def build():
     # Tesseract — just prepend the library, let it fetch worker/core from CDN
     # to avoid "NetworkError: Failed to execute 'importScripts' on 'WorkerGlobalScope'"
     # which happens when a data URI worker tries to load relative WASM scripts.
-    tess_lib = safe_js(fetch_url("https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"))
+    tess_lib = safe_js(fetch_url("https://cdn.jsdelivr.net/npm/tesseract.js@7/dist/tesseract.min.js"))
     if tess_lib:
         js_blob = tess_lib + "\n\n" + js_blob
         log(OK, "Tesseract library inlined (worker/core will fetch from CDN)")

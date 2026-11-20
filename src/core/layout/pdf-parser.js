@@ -526,6 +526,7 @@ export const executePdfConversion = async function (files) {
                     logToTerminal(`Enhanced loading failed, trying basic options...`, 'warn');
                     const basicOptions = {
                         data: originalBuffer.slice(0),
+                        isEvalSupported: false,
                         password: file.password || undefined,
                         ...(navigator.webdriver ? { onPassword: () => { throw new Error('PasswordException'); } } : {}),
                         stopAtErrors: false

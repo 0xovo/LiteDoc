@@ -282,7 +282,7 @@ var LiteDocCore = (function () {
     // PDF Password Bypass Logic
     async function loadPdfWithPassword(arrayBuffer, fileName, password) {
         try {
-            const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, password });
+            const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, password, isEvalSupported: false });
             const pdf = await loadingTask.promise;
             return { pdf, password };
         } catch (err) {
@@ -1630,6 +1630,7 @@ var LiteDocCore = (function () {
                         logToTerminal(`Enhanced PDF loading failed; reattempting with fallback compatibility options...`, 'warn');
                         const basicOptions = {
                             data: originalBuffer.slice(0),
+                            isEvalSupported: false,
                             password: file.password || undefined,
                             ...(navigator.webdriver ? { onPassword: () => { throw new Error('PasswordException'); } } : {}),
                             stopAtErrors: false
