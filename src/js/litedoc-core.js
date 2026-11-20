@@ -1940,6 +1940,24 @@ var LiteDocCore = (function () {
                 // Q4: table continuation state is per document, never per session.
                 if (typeof window !== 'undefined') window.__litedocTableState = {};
 
+                // Q7 heading authority, first source: the PDF outline.
+                // Normalised title to outline depth (1 is top level).
+                const outlineLevels = new Map();
+                try {
+                    const outline = await pdfDoc.getOutline();
+                    const walkOutline = (entries, depth) => {
+                        for (const e of entries || []) {
+                            if (e && e.title) {
+                                const key = e.title.toLowerCase().replace(/\s+/g, ' ').trim();
+                                if (key && !outlineLevels.has(key)) outlineLevels.set(key, Math.min(depth, 3));
+                            }
+                            if (e && e.items) walkOutline(e.items, depth + 1);
+                        }
+                    };
+                    walkOutline(outline, 1);
+                    if (outlineLevels.size) logToTerminal(`[Structure] PDF outline found: ${outlineLevels.size} titled entries.`, 'info');
+                } catch (e) { /* no outline: font clustering decides */ }
+
                 // pass 1: fingerprint
                 let allRawLineTexts = [];
                 let allRawLineHeights = [];
@@ -2342,7 +2360,47 @@ var LiteDocCore = (function () {
                         const medH = allLineGroups.map(l => l.height).sort((a,b) => a-b)[Math.floor(allLineGroups.length/2)] || 12;
                         const hThresh = classifyHeadings(allLineGroups);
 
+                        // Q7 heading authority, second source: the struct
+                        // tree. pdf.js returns roles with content ids but
+                        // no text, so a role cannot be mapped to a line;
+                        // the count is recorded on the page layout and used
+                        // only as a rescue when the font pass finds no
+                        // heading at all on the page.
+                        let structHeadingCount = 0;
+                        try {
+                            const st = await page.getStructTree();
+                            const countRoles = (node) => {
+                                if (!node || typeof node !== 'object') return;
+                                if (typeof node.role === 'string' && /^H[1-6]?$/.test(node.role)) structHeadingCount++;
+                                for (const c of node.children || []) countRoles(c);
+                            };
+                            countRoles(st);
+                        } catch (e) { /* no struct tree */ }
+
+                        const pageHasFontHeading = allLineGroups.some(g => !g.garbage && g.text && /\p{L}/u.test(g.text) && headingLevel(g.fontSize, hThresh, g.isBold) > 0);
+
+                        // Q7 footnote band: small-type lines in the bottom
+                        // 10 percent of the page that open with a marker
+                        // are held back and emitted after the page body.
+                        const pageFootnoteTexts = [];
+                        {
+                            const sizes = allLineGroups.map(g => g.fontSize || 0).filter(v => v > 0).sort((a, b) => a - b);
+                            const medFs = sizes.length ? sizes[Math.floor(sizes.length / 2)] : 0;
+                            if (medFs > 0) {
+                                for (const lg of allLineGroups) {
+                                    if (lg.garbage || lg.injectedMarkdown) continue;
+                                    const t = (lg.text || '').trim();
+                                    if (!t) continue;
+                                    if (lg.y < pageH * 0.10 && (lg.fontSize || 0) <= medFs * 0.92 && /^([0-9]{1,3}|[*\u2020\u2021\u00a7\u00b6]|\(\d+\))\s/.test(t)) {
+                                        lg.isFootnote = true;
+                                        pageFootnoteTexts.push(t);
+                                    }
+                                }
+                            }
+                        }
+
                         const pageLayout = {
+                            structHeadings: structHeadingCount,
                             page: pageNum,
                             width: Math.round(pageW), height: Math.round(pageH),
                             lines: allLineGroups
@@ -2498,6 +2556,7 @@ var LiteDocCore = (function () {
                             };
 
                             for (const lg of lines) {
+                                if (lg.isFootnote) continue;
                                 // Content injected by the enhancement pass (grid tables,
                                 // figures, math) anchored to this line — emit it in place.
                                 if (lg.injectedMarkdown && lg.injectedMarkdown.trim()) {
@@ -2589,6 +2648,12 @@ var LiteDocCore = (function () {
                                     if (!txt) continue;
                                     // A line with no letters (digit rows in worked sums, page counters) is never a heading.
                                     let level = /\p{L}/u.test(txt) ? headingLevel(lg.fontSize, hThresh, lg.isBold) : 0;
+                                    // Q7 authority order: outline beats fonts;
+                                    // the struct count rescues a bold line only
+                                    // when the font pass found no heading at all.
+                                    const outlineDepth = outlineLevels.get(txt.toLowerCase().replace(/\s+/g, ' ').trim());
+                                    if (outlineDepth) level = Math.max(1, 4 - outlineDepth);
+                                    else if (level === 0 && structHeadingCount > 0 && !pageHasFontHeading && lg.isBold && txt.split(/\s+/).length <= 8) level = 1;
                                     if (level > 0) { flushPara(); mdArr.push('#'.repeat(4-level) + ' ' + txt); }
                                     else {
                                         const gap = prevY !== null ? (prevY - lg.y) : 0;
@@ -2630,6 +2695,9 @@ var LiteDocCore = (function () {
                         }
 
                         let pageMd = pageMdLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+                        if (pageFootnoteTexts.length) {
+                            pageMd = (pageMd + '\n\n' + pageFootnoteTexts.join('\n')).trim();
+                        }
                         if (enhancedMd && enhancedMd.trim()) {
                             pageMd = (pageMd + '\n\n' + enhancedMd.trim()).trim().replace(/\n{3,}/g, '\n\n');
                         }
