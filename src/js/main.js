@@ -62,12 +62,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             console.warn('[Boot] pdf-parser.js has not registered the conversion engine yet.');
         }
 
-        // Fire and forget: Precache OCR models in the background
-        if (window.__litedocOCR && typeof window.__litedocOCR.precacheModels === 'function') {
-            if (!window.__litedocAddons || window.__litedocAddons.ocrEnabled()) {
-                window.__litedocOCR.precacheModels();
-            }
-        }
+        // Q8: no OCR precache at boot. Tesseract loads lazily on the
+        // first OCR task, so a text-only session never downloads or
+        // initialises the OCR engine. precacheModels stays available
+        // for an explicit warm-up call.
 
         console.log('[Boot] Sequence complete.');
     } catch (error) {

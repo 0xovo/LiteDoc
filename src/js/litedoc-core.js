@@ -1832,6 +1832,7 @@ var LiteDocCore = (function () {
             const baseProgress = (fIndex / files.length) * 100;
             const fileProgressShare = 100 / files.length;
 
+            let activePdfDoc = null;
             logToTerminal(`[File ${fIndex + 1}/${files.length}] Initializing document extraction pipeline for: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`, 'info');
             updateProgress(Math.round(baseProgress + 5), `Reading file ${fIndex + 1} of ${files.length}...`, file.name);
 
@@ -1860,6 +1861,7 @@ var LiteDocCore = (function () {
                     
                     const ocrLang = (__litedocAddons && __litedocAddons._settings.ocrLang) || 'eng';
                     const ocrResult = await __litedocAddons.ocrCanvas(canv, file.name, { ocrLang, ocrEnabled: true });
+                    canv.width = 0; canv.height = 0;
                     
                     const mdText = `\x3C!-- Converted from ${file.name} (Direct OCR${ocrResult && ocrResult.isMultiRegion ? ' - Multi-Region' : ''}) --\x3E\n\n## OCR Result\n\n${ocrResult ? ocrResult.text : ''}`;
                     state.processedData.push({ filename: file.name, status: 'success', mdText, extractedImages: [], inlineRenders: {}, numPages: 1 });
@@ -1923,6 +1925,7 @@ var LiteDocCore = (function () {
                 }
 
                 const pdfDoc = pdf.pdf ? pdf.pdf : pdf;
+                activePdfDoc = pdfDoc;
                 logToTerminal(`[Structure] Document binary parsed successfully. Total Pages: ${pdfDoc.numPages}`, 'success');
                 if (typeof updateProgress === 'function') {
                     updateProgress(Math.round(baseProgress + fileProgressShare * 0.1), `Analyzing document structure (${pdfDoc.numPages} pages)...`, file.name);
@@ -2084,7 +2087,10 @@ var LiteDocCore = (function () {
                         logToTerminal(`[Pass 2: Font Audit] Corrupted font mapping discovered! Triggering automatic resolution protocol...`, 'warn');
                         if (state.autoResolveEnabled) fontMode = state.autoResolveAction;
                         else fontMode = await showFontAlert(file.name, '');
-                        if (fontMode === 'cancel') break fileLoop;
+                        if (fontMode === 'cancel') {
+                            if (activePdfDoc) { try { await activePdfDoc.destroy(); } catch (e2) {} activePdfDoc = null; }
+                            break fileLoop;
+                        }
                         if (fontMode === 'skip') continue;
                     } else {
                         logToTerminal(`[Pass 2: Font Audit] Font structure validated. All glyph mappings are readable.`, 'success');
@@ -2103,8 +2109,10 @@ var LiteDocCore = (function () {
                             updateProgress(Math.min(99, Math.max(17, Math.round(baseProgress + fileProgressShare * pct))), `Extracting page ${pageNum} of ${pdfDoc.numPages}...`, file.name);
                         }
 
+                        let pageRef = null;
                         try {
                         const page = await pdfDoc.getPage(pageNum);
+                        pageRef = page;
                         const textContent = await page.getTextContent({ includeMarkedContent: false });
                         const [_vx0, _vy0, _vx1, _vy1] = page.view;
                         const pageW = _vx1 - _vx0;
@@ -2263,10 +2271,11 @@ var LiteDocCore = (function () {
                                 ctx.fillRect(0, 0, canv.width, canv.height);
                                 await page.render({ canvasContext: ctx, viewport: vp }).promise;
                                 const ocrResult = await __litedocAddons.ocrCanvas(canv, file.name, { ocrLang: docOcrLang, ocrEnabled: true });
-                                
+                                const canvH = canv.height;
+                                canv.width = 0; canv.height = 0;
                                 if (ocrResult && ocrResult.words && ocrResult.words.length > 0) {
                                     logToTerminal(`[Page ${pageNum}/${pdfDoc.numPages}] OCR finished: recovered ${ocrResult.words.length} spatial words via multi-region recognition.`, 'success');
-                                    items.push(...ocrWordsToItems(ocrResult.words, canv.height));
+                                    items.push(...ocrWordsToItems(ocrResult.words, canvH));
                                 } else if (ocrResult && ocrResult.text && ocrResult.text.trim()) {
                                     mdText += (pageNum > 1 ? '\n\n---\n\n' : '') + `## Page ${pageNum} (OCR)\n\n` + ocrResult.text;
                                     page.cleanup();
@@ -2796,6 +2805,7 @@ var LiteDocCore = (function () {
 
                         page.cleanup();
                         } catch (e) {
+                            if (pageRef) { try { pageRef.cleanup(); } catch (e2) {} }
                             console.error(`[Core Error] Page ${pageNum} processing failed:`, e);
                             logToTerminal(`[Page ${pageNum}/${pdfDoc.numPages}] Processing encountered an exception: ${e.message || e}`, 'error');
                         }
@@ -2807,10 +2817,15 @@ var LiteDocCore = (function () {
                     logToTerminal(`[Chunk Processing] Extracting data from page block ${chunkStart}–${chunkEnd}...`, 'info');
                     await processChunk(chunkStart, chunkEnd);
                 }
+                sharedCanvas.width = 0; sharedCanvas.height = 0;
                 await pdfDoc.destroy();
+                activePdfDoc = null;
                 logToTerminal(`[Conversion Complete] Finished ${file.name}: 100% of document hierarchy successfully indexed and mapped!`, 'success');
                 state.processedData.push({ filename: file.name, status: 'success', mdText, extractedImages, inlineRenders: pageInlineRenders, numPages: pdfDoc.numPages, layout: docLayout, sourceMap, lowConfidencePages, pdfBlobUrl });
-            } catch (err) { logToTerminal(`Failed: ${file.name}`, 'error'); }
+            } catch (err) {
+                logToTerminal(`Failed: ${file.name}`, 'error');
+                if (activePdfDoc) { try { await activePdfDoc.destroy(); } catch (e2) {} activePdfDoc = null; }
+            }
         }
         updateProgress(100, 'Conversion Finished', 'Ready');
 

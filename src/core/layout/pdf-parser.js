@@ -649,6 +649,7 @@ export const executePdfConversion = async function (files) {
         const baseProgress = (fIndex / files.length) * 100;
         const fileProgressShare = 100 / files.length;
 
+        let activePdfDoc = null;
         logToTerminal(`[File ${fIndex + 1}/${files.length}] Initializing: ${file.name}`);
         updateProgress(baseProgress + 5, `Reading file ${fIndex + 1} of ${files.length}...`, file.name);
 
@@ -677,6 +678,7 @@ export const executePdfConversion = async function (files) {
                 
                 const ocrLang = (addons.__litedocAddons && addons.__litedocAddons._settings.ocrLang) || 'eng';
                 const ocrResult = await addons.__litedocAddons.ocrCanvas(canv, file.name, { ocrLang, ocrEnabled: true });
+                canv.width = 0; canv.height = 0;
                 
                 const mdText = `\x3C!-- Converted from ${file.name} (Direct OCR${ocrResult && ocrResult.isMultiRegion ? ' - Multi-Region' : ''}) --\x3E\n\n## OCR Result\n\n${ocrResult ? ocrResult.text : ''}`;
                 state.processedData.push({ filename: file.name, status: 'success', mdText, extractedImages: [], inlineRenders: {}, numPages: 1 });
@@ -731,6 +733,7 @@ export const executePdfConversion = async function (files) {
             }
 
             const pdfDoc = pdf.pdf ? pdf.pdf : pdf;
+            activePdfDoc = pdfDoc;
             logToTerminal(`Recognized. Pages: ${pdfDoc.numPages}`);
             if (typeof updateProgress === 'function') {
                 updateProgress(Math.round(baseProgress + fileProgressShare * 0.1), `Analyzing document layout (${pdfDoc.numPages} pages)...`, file.name);
@@ -860,7 +863,10 @@ export const executePdfConversion = async function (files) {
                 if (foundCorruption) {
                     if (state.autoResolveEnabled) fontMode = state.autoResolveAction;
                     else fontMode = await showFontAlert(file.name, '');
-                    if (fontMode === 'cancel') break fileLoop;
+                    if (fontMode === 'cancel') {
+                        if (activePdfDoc) { try { await activePdfDoc.destroy(); } catch (e2) {} activePdfDoc = null; }
+                        break fileLoop;
+                    }
                     if (fontMode === 'skip') continue;
                 }
             }
@@ -875,8 +881,10 @@ export const executePdfConversion = async function (files) {
                         updateProgress(Math.min(99, Math.max(10, Math.round(baseProgress + fileProgressShare * pct))), `Processing page ${pageNum} of ${pdfDoc.numPages}...`, file.name);
                     }
 
+                    let pageRef = null;
                     try {
                     const page = await pdfDoc.getPage(pageNum);
+                    pageRef = page;
                     const textContent = await page.getTextContent({ includeMarkedContent: false });
                     const [_vx0, _vy0, _vx1, _vy1] = page.view;
                     const pageW = _vx1 - _vx0;
@@ -1025,9 +1033,11 @@ export const executePdfConversion = async function (files) {
                             ctx.fillRect(0, 0, canv.width, canv.height);
                             await page.render({ canvasContext: ctx, viewport: vp }).promise;
                             const ocrResult = await addons.__litedocAddons.ocrCanvas(canv, file.name, { ocrLang: docOcrLang, ocrEnabled: true });
+                            const canvH = canv.height;
+                            canv.width = 0; canv.height = 0;
                             
                             if (ocrResult && ocrResult.words && ocrResult.words.length > 0) {
-                                items.push(...ocrWordsToItems(ocrResult.words, canv.height));
+                                items.push(...ocrWordsToItems(ocrResult.words, canvH));
                             } else if (ocrResult && ocrResult.text && ocrResult.text.trim()) {
                                 mdText += (pageNum > 1 ? '\n\n---\n\n' : '') + `## Page ${pageNum} (OCR)\n\n` + ocrResult.text;
                                 page.cleanup();
@@ -1407,6 +1417,7 @@ export const executePdfConversion = async function (files) {
                     
                     page.cleanup();
                     } catch (e) {
+                        if (pageRef) { try { pageRef.cleanup(); } catch (e2) {} }
                         console.error(`[Core Error] Page ${pageNum} processing failed:`, e);
                     }
                 }
@@ -1415,9 +1426,14 @@ export const executePdfConversion = async function (files) {
             for (let chunkStart = 1; chunkStart <= pdfDoc.numPages; chunkStart += CHUNK_SIZE) {
                 await processChunk(chunkStart, Math.min(chunkStart + CHUNK_SIZE - 1, pdfDoc.numPages));
             }
+            sharedCanvas.width = 0; sharedCanvas.height = 0;
             await pdfDoc.destroy();
+            activePdfDoc = null;
             state.processedData.push({ filename: file.name, status: 'success', mdText, extractedImages, inlineRenders: pageInlineRenders, numPages: pdfDoc.numPages, layout: docLayout });
-        } catch (err) { logToTerminal(`Failed: ${file.name}`, 'error'); }
+        } catch (err) {
+            logToTerminal(`Failed: ${file.name}`, 'error');
+            if (activePdfDoc) { try { await activePdfDoc.destroy(); } catch (e2) {} activePdfDoc = null; }
+        }
     }
     updateProgress(100, 'Complete', '');
 
