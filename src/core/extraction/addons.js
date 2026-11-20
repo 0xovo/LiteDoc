@@ -45,7 +45,7 @@ function clearOcrQueue() {
 // PDF Password Bypass Logic
 async function loadPdfWithPassword(arrayBuffer, fileName, password) {
     try {
-        const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, password });
+        const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, password, isEvalSupported: false });
         const pdf = await loadingTask.promise;
         pdf.__loadingTask = loadingTask;
         return { pdf, password };
