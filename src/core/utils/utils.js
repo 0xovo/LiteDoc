@@ -321,16 +321,26 @@ function headingLevel(fontSize, thresholds, isBold) {
     return 0;
 }
 
+// Furniture fingerprints (Q3): two copies of the same running header must
+// produce the same fingerprint even when one carries a page number or the
+// items were joined with different spacing, so fingerprints strip all
+// whitespace and fold every digit run to a single marker.
+function normalizeFingerprint(text) {
+    return (text || '').replace(/\s+/g, '').replace(/\d+/g, '#');
+}
+
 // dedup
 function buildFingerprintSet(allPageLines, totalPages) {
     if (totalPages < 3) return new Set();
     const freq = {};
     for (const line of allPageLines) {
-        const fp = line.trim();
+        const fp = normalizeFingerprint(line);
         if (fp.length < 3 || fp.length > 120) continue;
         freq[fp] = (freq[fp] || 0) + 1;
     }
-    const threshold = Math.max(2, Math.floor(totalPages * 0.5));
+    // 30 percent recurrence (was 50): a header that only appears from the
+    // second section onward is still furniture.
+    const threshold = Math.max(2, Math.ceil(totalPages * 0.3));
     const repeating = new Set();
     for (const [fp, count] of Object.entries(freq)) {
         if (count >= threshold) repeating.add(fp);
@@ -338,7 +348,7 @@ function buildFingerprintSet(allPageLines, totalPages) {
     return repeating;
 }
 
-export { scriptBucket, isSymbolGlyph, expandText, detectCorruptedFonts, itemGibberishScore, joinLineItems, detectColumnSplit, classifyHeadings, headingLevel, buildFingerprintSet };
+export { scriptBucket, isSymbolGlyph, expandText, normalizeFingerprint, detectCorruptedFonts, itemGibberishScore, joinLineItems, detectColumnSplit, classifyHeadings, headingLevel, buildFingerprintSet };
 
 // global ace sync flag removed - consolidated in state.js
 

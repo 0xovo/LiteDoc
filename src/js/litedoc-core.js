@@ -274,16 +274,22 @@ var LiteDocCore = (function () {
         return 0;
     }
 
+    // Furniture fingerprints (Q3): whitespace-stripped, digit-folded, so a
+    // running header and its page-numbered footer copies share one key.
+    function normalizeFingerprint(text) {
+        return (text || '').replace(/\s+/g, '').replace(/\d+/g, '#');
+    }
+
     // dedup
     function buildFingerprintSet(allPageLines, totalPages) {
         if (totalPages < 3) return new Set();
         const freq = {};
         for (const line of allPageLines) {
-            const fp = line.trim();
+            const fp = normalizeFingerprint(line);
             if (fp.length < 3 || fp.length > 120) continue;
             freq[fp] = (freq[fp] || 0) + 1;
         }
-        const threshold = Math.max(2, Math.floor(totalPages * 0.5));
+        const threshold = Math.max(2, Math.ceil(totalPages * 0.3));
         const repeating = new Set();
         for (const [fp, count] of Object.entries(freq)) {
             if (count >= threshold) repeating.add(fp);
@@ -1709,6 +1715,8 @@ var LiteDocCore = (function () {
 
                 // pass 1: fingerprint
                 let allRawLineTexts = [];
+                let allRawLineHeights = [];
+                let allRawLineMargins = [];
                 if (pdfDoc.numPages >= 3) {
                     const samplePages = Math.min(pdfDoc.numPages, 12);
                     logToTerminal(`[Pass 1: Layout Fingerprint] Sampling ${samplePages} reference pages for repeating headers and running title anomalies...`, 'info');
@@ -1718,6 +1726,7 @@ var LiteDocCore = (function () {
                             updateProgress(Math.round(baseProgress + fileProgressShare * (p / 100)), `Scanning header patterns (page ${pn}/${samplePages})...`, file.name);
                         }
                         const pg = await pdfDoc.getPage(pn);
+                        const passH = pg.view ? pg.view[3] : pageH;
                         const tc = await pg.getTextContent();
                         const mappedItems = tc.items.map(item => ({
                             str: item.str,
@@ -1748,12 +1757,43 @@ var LiteDocCore = (function () {
                         }
                         for (const lg of lines) {
                             const rawNoSpace = lg.items.map(it => it.str).join('').trim();
-                            if (rawNoSpace.length > 0) allRawLineTexts.push(rawNoSpace);
+                            if (rawNoSpace.length > 0) {
+                                allRawLineTexts.push(rawNoSpace);
+                                allRawLineHeights.push(Math.max(...lg.items.map(it => it.height || 0)));
+                                allRawLineMargins.push(lg.lastY > passH * activeConfig$1.bottomMarginThreshold || lg.lastY < passH * activeConfig$1.topMarginThreshold);
+                            }
                         }
                         pg.cleanup();
                     }
                 }
+                // Font-size guard: lines far larger than the sampled median
+                // line height are titles, not furniture, and never become
+                // fingerprint candidates.
+                if (allRawLineHeights.length) {
+                    const sortedH = [...allRawLineHeights].sort((a, b) => a - b);
+                    const medLineH = sortedH[Math.floor(sortedH.length / 2)] || 0;
+                    if (medLineH > 0) {
+                        const keepIdx = allRawLineHeights.map((h, i) => h <= medLineH * 1.6 ? i : -1).filter(i => i >= 0);
+                        allRawLineTexts = keepIdx.map(i => allRawLineTexts[i]);
+                        allRawLineMargins = keepIdx.map(i => allRawLineMargins[i]);
+                    }
+                }
                 const repeatingFPs = buildFingerprintSet(allRawLineTexts, pdfDoc.numPages);
+                // Back-off: if the matched fingerprints would strip more than
+                // 15 percent of the sampled text, the "furniture" is really
+                // body content (forms, repeated table rows); strip nothing.
+                if (repeatingFPs.size > 0) {
+                    let totalChars = 0, matchedChars = 0;
+                    allRawLineTexts.forEach((t, i) => {
+                        const fp = normalizeFingerprint(t);
+                        totalChars += fp.length;
+                        if (allRawLineMargins[i] && repeatingFPs.has(fp)) matchedChars += fp.length;
+                    });
+                    if (totalChars > 0 && matchedChars / totalChars > 0.15) {
+                        repeatingFPs.clear();
+                        logToTerminal('[Pass 1: Layout Fingerprint] Repeating lines exceed 15 percent of sampled text; treating them as content, not furniture.', 'warn');
+                    }
+                }
                 if (repeatingFPs.size > 0) {
                     logToTerminal(`[Pass 1: Layout Fingerprint] Identified ${repeatingFPs.size} repetitive header/footer signature(s) for automatic filtration.`, 'success');
                 } else {
@@ -2037,7 +2077,7 @@ var LiteDocCore = (function () {
                                 const lineStr = lg.items.map(it => it.str).join('');
                                 const rawNoSpace = lg.items.map(it => it.str).join('').replace(/\s+/g, '');
                                 const isMargin = lg.y > pageH * activeConfig$1.bottomMarginThreshold || lg.y < pageH * activeConfig$1.topMarginThreshold;
-                                if ((repeatingFPs.has(rawNoSpace) && isMargin) || (/^\d+$/.test(rawNoSpace) && isMargin)) {
+                                if ((repeatingFPs.has(normalizeFingerprint(rawNoSpace)) && isMargin) || (/^\d+$/.test(rawNoSpace) && isMargin)) {
                                     lg.garbage = true; lg.items.forEach(it => it.garbage = true);
                                 }
                                 lg.text = joinLineItems(lg.items.filter(it => !it.garbage), activeConfig$1);
@@ -2125,6 +2165,31 @@ var LiteDocCore = (function () {
                             pageLayout,
                             logToTerminal,
                         });
+
+                        // Q3 dehyphenation evidence: words that appear as complete
+                        // tokens somewhere on this page OUTSIDE a hyphen break.
+                        // A fragment that only ever appears glued to a hyphen is
+                        // not a standalone word in this document.
+                        const standaloneWords = new Set();
+                        {
+                            const pageLines = allLineGroups.map(g => (g.text || '').trim());
+                            pageLines.forEach((t, i) => {
+                                const toks = t.toLowerCase().match(/[\p{L}]+/gu) || [];
+                                toks.forEach((tok, j) => {
+                                    const isBreakFrag = j === toks.length - 1 && t.endsWith('-');
+                                    const isContFrag = j === 0 && i > 0 && pageLines[i - 1].endsWith('-');
+                                    if (!isBreakFrag && !isContFrag && tok.length >= 2) standaloneWords.add(tok);
+                                });
+                            });
+                        }
+                        const dropSoftHyphen = (prevText, nextText) => {
+                            const a = prevText.match(/([\p{L}]+)-$/u);
+                            const b = nextText.match(/^([\p{L}]+)/u);
+                            if (!a || !b) return false;
+                            const joined = (a[1] + b[1]).toLowerCase();
+                            if (standaloneWords.has(joined)) return true;
+                            return !(standaloneWords.has(a[1].toLowerCase()) && standaloneWords.has(b[1].toLowerCase()));
+                        };
 
                         function linesToMd(lines) {
                             const mdArr = [];
@@ -2301,7 +2366,11 @@ var LiteDocCore = (function () {
                                     else {
                                         const gap = prevY !== null ? (prevY - lg.y) : 0;
                                         if (gap > medH * activeConfig$1.paragraphGapThreshold) flushPara();
-                                        if (prevLine && Math.abs(lg.fontSize - prevLine.fontSize) < 0.6 && gap < medH * activeConfig$1.continuationGapThreshold) paragraphBuf += (paragraphBuf.endsWith('-') ? '' : ' ') + txt;
+                                        if (prevLine && Math.abs(lg.fontSize - prevLine.fontSize) < 0.6 && gap < medH * activeConfig$1.continuationGapThreshold) {
+                                            let joiner = paragraphBuf.endsWith('-') ? '' : ' ';
+                                            if (paragraphBuf.endsWith('-') && dropSoftHyphen(paragraphBuf, txt)) { paragraphBuf = paragraphBuf.slice(0, -1); joiner = ''; }
+                                            paragraphBuf += joiner + txt;
+                                        }
                                         else paragraphBuf = txt;
                                     }
                                 }

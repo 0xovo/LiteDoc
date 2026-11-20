@@ -552,10 +552,13 @@ export const executePdfConversion = async function (files) {
 
             // pass 1: fingerprint
             let allRawLineTexts = [];
+            let allRawLineHeights = [];
+            let allRawLineMargins = [];
             if (pdfDoc.numPages >= 3) {
                 const samplePages = Math.min(pdfDoc.numPages, 12);
                 for (let pn = 1; pn <= samplePages; pn++) {
                     const pg = await pdfDoc.getPage(pn);
+                    const passH = pg.view ? pg.view[3] : 792;
                     const tc = await pg.getTextContent();
                     const mappedItems = tc.items.map(item => ({
                         str: item.str,
@@ -586,12 +589,35 @@ export const executePdfConversion = async function (files) {
                     }
                     for (const lg of lines) {
                         const rawNoSpace = lg.items.map(it => it.str).join('').trim();
-                        if (rawNoSpace.length > 0) allRawLineTexts.push(rawNoSpace);
+                        if (rawNoSpace.length > 0) {
+                            allRawLineTexts.push(rawNoSpace);
+                            allRawLineHeights.push(Math.max(...lg.items.map(it => it.height || 0)));
+                            allRawLineMargins.push(lg.lastY > passH * activeConfig.bottomMarginThreshold || lg.lastY < passH * activeConfig.topMarginThreshold);
+                        }
                     }
                     pg.cleanup();
                 }
             }
+            // Q3 font-size guard and 15 percent back-off: see litedoc-core.js.
+            if (allRawLineHeights.length) {
+                const sortedH = [...allRawLineHeights].sort((a, b) => a - b);
+                const medLineH = sortedH[Math.floor(sortedH.length / 2)] || 0;
+                if (medLineH > 0) {
+                    const keepIdx = allRawLineHeights.map((h, i) => h <= medLineH * 1.6 ? i : -1).filter(i => i >= 0);
+                    allRawLineTexts = keepIdx.map(i => allRawLineTexts[i]);
+                    allRawLineMargins = keepIdx.map(i => allRawLineMargins[i]);
+                }
+            }
             const repeatingFPs = utils.buildFingerprintSet(allRawLineTexts, pdfDoc.numPages);
+            if (repeatingFPs.size > 0) {
+                let totalChars = 0, matchedChars = 0;
+                allRawLineTexts.forEach((t, i) => {
+                    const fp = utils.normalizeFingerprint(t);
+                    totalChars += fp.length;
+                    if (allRawLineMargins[i] && repeatingFPs.has(fp)) matchedChars += fp.length;
+                });
+                if (totalChars > 0 && matchedChars / totalChars > 0.15) repeatingFPs.clear();
+            }
 
             let mdText = `\x3C!-- Converted from ${file.name} — ${pdfDoc.numPages} pages --\x3E\n\n`;
             const extractedImages = [];
@@ -841,7 +867,7 @@ export const executePdfConversion = async function (files) {
                             const lineStr = lg.items.map(it => it.str).join('');
                             const rawNoSpace = lg.items.map(it => it.str).join('').replace(/\s+/g, '');
                             const isMargin = lg.y > pageH * activeConfig.bottomMarginThreshold || lg.y < pageH * activeConfig.topMarginThreshold;
-                            if ((repeatingFPs.has(rawNoSpace) && isMargin) || (/^\d+$/.test(rawNoSpace) && isMargin)) {
+                            if ((repeatingFPs.has(utils.normalizeFingerprint(rawNoSpace)) && isMargin) || (/^\d+$/.test(rawNoSpace) && isMargin)) {
                                 lg.garbage = true; lg.items.forEach(it => it.garbage = true);
                             }
                             lg.text = utils.joinLineItems(lg.items.filter(it => !it.garbage), activeConfig);
@@ -896,6 +922,28 @@ export const executePdfConversion = async function (files) {
                         tables: [],
                     };
                     docLayout.push(pageLayout);
+
+                    // Q3 dehyphenation evidence: see litedoc-core.js.
+                    const standaloneWords = new Set();
+                    {
+                        const pageLines = allLineGroups.map(g => (g.text || '').trim());
+                        pageLines.forEach((t, i) => {
+                            const toks = t.toLowerCase().match(/[\p{L}]+/gu) || [];
+                            toks.forEach((tok, j) => {
+                                const isBreakFrag = j === toks.length - 1 && t.endsWith('-');
+                                const isContFrag = j === 0 && i > 0 && pageLines[i - 1].endsWith('-');
+                                if (!isBreakFrag && !isContFrag && tok.length >= 2) standaloneWords.add(tok);
+                            });
+                        });
+                    }
+                    const dropSoftHyphen = (prevText, nextText) => {
+                        const a = prevText.match(/([\p{L}]+)-$/u);
+                        const b = nextText.match(/^([\p{L}]+)/u);
+                        if (!a || !b) return false;
+                        const joined = (a[1] + b[1]).toLowerCase();
+                        if (standaloneWords.has(joined)) return true;
+                        return !(standaloneWords.has(a[1].toLowerCase()) && standaloneWords.has(b[1].toLowerCase()));
+                    };
 
                     function linesToMd(lines) {
                         const mdArr = [];
@@ -1065,7 +1113,11 @@ export const executePdfConversion = async function (files) {
                                 else {
                                     const gap = prevY !== null ? (prevY - lg.y) : 0;
                                     if (gap > medH * activeConfig.paragraphGapThreshold) flushPara();
-                                    if (prevLine && Math.abs(lg.fontSize - prevLine.fontSize) < 0.6 && gap < medH * activeConfig.continuationGapThreshold) paragraphBuf += (paragraphBuf.endsWith('-') ? '' : ' ') + txt;
+                                    if (prevLine && Math.abs(lg.fontSize - prevLine.fontSize) < 0.6 && gap < medH * activeConfig.continuationGapThreshold) {
+                                    let joiner = paragraphBuf.endsWith('-') ? '' : ' ';
+                                    if (paragraphBuf.endsWith('-') && dropSoftHyphen(paragraphBuf, txt)) { paragraphBuf = paragraphBuf.slice(0, -1); joiner = ''; }
+                                    paragraphBuf += joiner + txt;
+                                }
                                     else paragraphBuf = txt;
                                 }
                             }

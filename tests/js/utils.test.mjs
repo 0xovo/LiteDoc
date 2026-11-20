@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    scriptBucket, expandText, detectCorruptedFonts, itemGibberishScore, joinLineItems,
+    scriptBucket, expandText, normalizeFingerprint, detectCorruptedFonts, itemGibberishScore, joinLineItems,
     detectColumnSplit, classifyHeadings, headingLevel, buildFingerprintSet,
 } from '../../src/core/utils/utils.js';
 
@@ -115,9 +115,30 @@ test('buildFingerprintSet: repeated page header detected, needs 3+ pages', () =>
     const header = 'Journal of Testing — Vol 4';
     const lines = [header, 'unique one', header, 'unique two', header, 'unique three'];
     const set = buildFingerprintSet(lines, 3);
-    assert.ok(set.has(header));
-    assert.ok(!set.has('unique one'));
+    // Q3: fingerprints are stored normalised (no whitespace, digits folded).
+    assert.ok(set.has(normalizeFingerprint(header)));
+    assert.ok(!set.has(normalizeFingerprint('unique one')));
     assert.equal(buildFingerprintSet(lines, 2).size, 0);
+});
+
+test('buildFingerprintSet: digit normalisation unifies numbered footers', () => {
+    const lines = ['Page 1 of 9', 'body a', 'Page 2 of 9', 'body b', 'Page 3 of 9', 'body c'];
+    const set = buildFingerprintSet(lines, 3);
+    assert.ok(set.has('Page#of#'));
+});
+
+test('buildFingerprintSet: 30 percent recurrence catches a part-time header', () => {
+    // Header on 3 of 10 pages: under the old 50 percent rule it survived.
+    const lines = [];
+    for (let i = 0; i < 10; i++) {
+        if (i < 3) lines.push('Section Draft Header');
+        lines.push('unique body line ' + i);
+    }
+    const set = buildFingerprintSet(lines, 10);
+    assert.ok(set.has(normalizeFingerprint('Section Draft Header')));
+    // A line on 2 of 10 pages stays content.
+    const lines2 = ['Rare Repeat', 'Rare Repeat', ...Array.from({ length: 8 }, (_, i) => 'body ' + i)];
+    assert.ok(!buildFingerprintSet(lines2, 10).has(normalizeFingerprint('Rare Repeat')));
 });
 
 test('scriptBucket: C0 controls are their own bucket, not Latin', () => {
