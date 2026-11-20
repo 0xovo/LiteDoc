@@ -302,6 +302,82 @@
         }
     }
 
+    // Q5 variant trial helpers. Tesseract's own binarisation is the
+    // default; these two variants exist for low-confidence pages only.
+    function meanWordConfidence(d) {
+        const ws = flattenWords(d).filter(x => x.text && x.text.trim());
+        if (!ws.length) return 0;
+        return ws.reduce((a, x) => a + (x.confidence || 0), 0) / ws.length;
+    }
+
+    function variantScale(src) {
+        // Aim for roughly 300 DPI equivalent: core renders pages at
+        // scale 2.0 (about 144 DPI), so smaller canvases get a 1.5x
+        // upscale for the trial; already-large canvases stay as-is.
+        return src.width > 0 && src.width < 2500 ? 1.5 : 1;
+    }
+
+    function greyscaleCanvas(src) {
+        try {
+            const f = variantScale(src);
+            const c = document.createElement('canvas');
+            c.width = Math.round(src.width * f); c.height = Math.round(src.height * f);
+            const ctx = c.getContext('2d');
+            ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height);
+            ctx.drawImage(src, 0, 0, c.width, c.height);
+            const img = ctx.getImageData(0, 0, c.width, c.height);
+            const px = img.data;
+            for (let i = 0; i < px.length; i += 4) {
+                const g = Math.round(0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]);
+                px[i] = g; px[i + 1] = g; px[i + 2] = g;
+            }
+            ctx.putImageData(img, 0, 0);
+            return c;
+        } catch (e) { return null; }
+    }
+
+    function adaptiveThresholdCanvas(src) {
+        try {
+            const f = variantScale(src);
+            const w = Math.round(src.width * f), h = Math.round(src.height * f);
+            const c = document.createElement('canvas');
+            c.width = w; c.height = h;
+            const ctx = c.getContext('2d');
+            ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(src, 0, 0, w, h);
+            const img = ctx.getImageData(0, 0, w, h);
+            const px = img.data;
+            const grey = new Float32Array(w * h);
+            for (let i = 0, j = 0; i < px.length; i += 4, j++) {
+                grey[j] = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+            }
+            // Integral image for local means over a 31px window.
+            const integral = new Float64Array((w + 1) * (h + 1));
+            for (let y = 0; y < h; y++) {
+                let rowSum = 0;
+                for (let x = 0; x < w; x++) {
+                    rowSum += grey[y * w + x];
+                    integral[(y + 1) * (w + 1) + (x + 1)] = integral[y * (w + 1) + (x + 1)] + rowSum;
+                }
+            }
+            const R = 15, OFF = 14;
+            for (let y = 0; y < h; y++) {
+                const y0 = Math.max(0, y - R), y1 = Math.min(h - 1, y + R);
+                for (let x = 0; x < w; x++) {
+                    const x0 = Math.max(0, x - R), x1 = Math.min(w - 1, x + R);
+                    const sum = integral[(y1 + 1) * (w + 1) + (x1 + 1)] - integral[y0 * (w + 1) + (x1 + 1)]
+                        - integral[(y1 + 1) * (w + 1) + x0] + integral[y0 * (w + 1) + x0];
+                    const mean = sum / ((y1 - y0 + 1) * (x1 - x0 + 1));
+                    const v = grey[y * w + x] < mean - OFF ? 0 : 255;
+                    const i = (y * w + x) * 4;
+                    px[i] = v; px[i + 1] = v; px[i + 2] = v;
+                }
+            }
+            ctx.putImageData(img, 0, 0);
+            return c;
+        } catch (e) { return null; }
+    }
+
     let isPumping = false;
     async function pumpQueue() {
         if (isPumping || queue.length === 0) {
@@ -473,7 +549,45 @@
                         if (task.lang && task.lang.includes('ara')) {
                             recognizeOptions.tessedit_pageseg_mode = '3';
                         }
-                        const { data } = await w.worker.recognize(processedPayload, recognizeOptions, { blocks: true, words: true });
+                        let { data } = await w.worker.recognize(processedPayload, recognizeOptions, { blocks: true, words: true });
+
+                        // Q5 variant trial: on a low-confidence page only,
+                        // try an adaptive-threshold variant and a greyscale
+                        // PSM 6 variant, and keep whichever scores the best
+                        // mean word confidence. Once per task, on the same
+                        // worker, so the pool shape never changes. Pages
+                        // that split into regions run the trial per region
+                        // (subtasks keep their PSM 11 base for the
+                        // threshold variant).
+                        if (!task.variantTrialDone && processedPayload && processedPayload.getContext) {
+                            const baseConf = meanWordConfidence(data);
+                            if (baseConf > 0 && baseConf < 80) {
+                                task.variantTrialDone = true;
+                                try {
+                                    const basePsm = task.isSubTask ? '11' : '3';
+                                    let best = { name: `current (greyscale, PSM ${basePsm})`, conf: baseConf, data };
+                                    const variants = [];
+                                    const thr = adaptiveThresholdCanvas(processedPayload);
+                                    if (thr) variants.push({ name: `adaptive-threshold, PSM ${basePsm}`, canvas: thr, psm: basePsm });
+                                    const grey = greyscaleCanvas(processedPayload);
+                                    if (grey) variants.push({ name: 'greyscale, PSM 6', canvas: grey, psm: '6' });
+                                    for (const v of variants) {
+                                        const altOpts = { user_defined_dpi: '300', tessedit_pageseg_mode: v.psm };
+                                        if (task.lang && task.lang.includes('ara')) altOpts.tessedit_pageseg_mode = '3';
+                                        const alt = await w.worker.recognize(v.canvas, altOpts, { blocks: true, words: true });
+                                        const c = meanWordConfidence(alt.data);
+                                        logToUI(`[Background OCR] Variant trial on task #${task.id}: ${v.name} scored ${c.toFixed(1)} (current best ${best.conf.toFixed(1)})`, 'info');
+                                        if (c > best.conf) best = { name: v.name, conf: c, data: alt.data };
+                                    }
+                                    if (best.data !== data) {
+                                        logToUI(`[Background OCR] Variant trial on task #${task.id}: kept ${best.name} at ${best.conf.toFixed(1)} mean confidence.`, 'success');
+                                        data = best.data;
+                                    } else {
+                                        logToUI(`[Background OCR] Variant trial on task #${task.id}: current pipeline kept at ${baseConf.toFixed(1)} mean confidence.`, 'info');
+                                    }
+                                } catch (e) { console.warn('[OCR] Variant trial failed', e); }
+                            }
+                        }
 
                         // Foreign-script rescue. Whole-page script detection can
                         // never catch ONE foreign line on an otherwise-English
