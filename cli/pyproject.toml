@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "litedoc-cli"
-version = "3.3.0"
+version = "3.4.0"
 description = "LiteDoc in your terminal: deterministic PDF → Markdown with an optional bring-your-own-AI repair pass. Same engine as litedoc.xyz."
 readme = "README.md"
 requires-python = ">=3.10"
