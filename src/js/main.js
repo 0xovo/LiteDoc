@@ -15,39 +15,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Auto-inject logic removed because it conflicts with the build script bundler.
     // Core scripts are bundled inline.
 
-    // 2. PDF.js Worker Initialization (delayed to ensure pdf.js is loaded)
+    // 2. PDF.js Worker Initialization: the bridge (source mode module or
+    // the build's blob bridge) has already set workerSrc before
+    // DOMContentLoaded. Only fill it from the bridge global if missing.
     if (typeof pdfjsLib !== 'undefined') {
-        // Configure comprehensive PDF.js options for maximum format support
         pdfjsLib.GlobalWorkerOptions.workerPort = null;
-
-        // Default worker URL (build.py will patch this with a data URI)
-        if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-            pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
+        if (window.__litedocPdfWorkerSrc) {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = window.__litedocPdfWorkerSrc;
+        } else if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.mjs';
         }
-
-        // If the worker is already configured (e.g. inlined as a data URI or pointing to a CDN by the build script), skip detection
-        const currentSrc = pdfjsLib.GlobalWorkerOptions.workerSrc || '';
-        if (currentSrc.startsWith('data:') || currentSrc.startsWith('http')) {
-            console.info('[Boot] PDF.js worker already configured.');
-        } else if (window.location.protocol === 'file:') {
-            console.info('[Boot] Running on file:// protocol. Using CDN for PDF.js worker.');
-            pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
-        } else {
-            try {
-                // Try local worker first, but catch the 404 to avoid console noise if possible
-                // Using { method: 'HEAD' } is better than a full GET but still shows 404 in most browsers
-                const res = await fetch('js/pdf.worker.min.js', { method: 'HEAD' });
-                if (res.ok || res.status === 0) {
-                    pdfjsLib.GlobalWorkerOptions.workerSrc = 'js/pdf.worker.min.js';
-                } else {
-                    throw new Error('Local worker not found');
-                }
-            } catch (e) {
-                console.info('[Boot] Local PDF.js worker not found or inaccessible. Falling back to CDN...');
-                pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
-            }
-        }
-
         console.info('[Boot] PDF.js worker configured successfully.');
     }
 

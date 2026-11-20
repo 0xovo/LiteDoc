@@ -343,6 +343,7 @@ var LiteDocCore = (function () {
         try {
             const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, password, isEvalSupported: false });
             const pdf = await loadingTask.promise;
+            pdf.__loadingTask = loadingTask;
             return { pdf, password };
         } catch (err) {
             if (err.name === 'PasswordException' || /password/i.test(err.message)) {
@@ -1807,6 +1808,17 @@ var LiteDocCore = (function () {
         return processSingleColumn(boxItems);
     }
 
+    // PDF.js v6 removed PDFDocumentProxy.destroy(): destruction goes
+    // through the loading task now. loadPdfWithPassword and the fallback
+    // loaders stash the task on the proxy as __loadingTask.
+    async function destroyPdfDoc(doc) {
+        if (!doc) return;
+        try {
+            if (doc.__loadingTask) await doc.__loadingTask.destroy();
+            else if (typeof doc.destroy === 'function') await doc.destroy();
+        } catch (e) { /* already destroyed */ }
+    }
+
     const executePdfConversion = async function (files) {
         showProgressState(true);
         
@@ -1906,6 +1918,7 @@ var LiteDocCore = (function () {
                             }
                         };
                         pdf = await loadingTask.promise;
+                        if (pdf) pdf.__loadingTask = loadingTask;
                     } catch (initialErr) {
                         const errName = initialErr && (initialErr.name || initialErr.constructor && initialErr.constructor.name);
                         const isPwd = errName === 'PasswordException' || /password/i.test(initialErr && initialErr.message || '');
@@ -1920,7 +1933,9 @@ var LiteDocCore = (function () {
                             ...(navigator.webdriver ? { onPassword: () => { throw new Error('PasswordException'); } } : {}),
                             stopAtErrors: false
                         };
-                        pdf = await pdfjsLib.getDocument(basicOptions).promise;
+                        const basicTask = pdfjsLib.getDocument(basicOptions);
+                        pdf = await basicTask.promise;
+                        if (pdf) pdf.__loadingTask = basicTask;
                     }
                 }
 
@@ -2088,7 +2103,7 @@ var LiteDocCore = (function () {
                         if (state.autoResolveEnabled) fontMode = state.autoResolveAction;
                         else fontMode = await showFontAlert(file.name, '');
                         if (fontMode === 'cancel') {
-                            if (activePdfDoc) { try { await activePdfDoc.destroy(); } catch (e2) {} activePdfDoc = null; }
+                            if (activePdfDoc) { await destroyPdfDoc(activePdfDoc); activePdfDoc = null; }
                             break fileLoop;
                         }
                         if (fontMode === 'skip') continue;
@@ -2818,13 +2833,13 @@ var LiteDocCore = (function () {
                     await processChunk(chunkStart, chunkEnd);
                 }
                 sharedCanvas.width = 0; sharedCanvas.height = 0;
-                await pdfDoc.destroy();
+                await destroyPdfDoc(pdfDoc);
                 activePdfDoc = null;
                 logToTerminal(`[Conversion Complete] Finished ${file.name}: 100% of document hierarchy successfully indexed and mapped!`, 'success');
                 state.processedData.push({ filename: file.name, status: 'success', mdText, extractedImages, inlineRenders: pageInlineRenders, numPages: pdfDoc.numPages, layout: docLayout, sourceMap, lowConfidencePages, pdfBlobUrl });
             } catch (err) {
                 logToTerminal(`Failed: ${file.name}`, 'error');
-                if (activePdfDoc) { try { await activePdfDoc.destroy(); } catch (e2) {} activePdfDoc = null; }
+                if (activePdfDoc) { await destroyPdfDoc(activePdfDoc); activePdfDoc = null; }
             }
         }
         updateProgress(100, 'Conversion Finished', 'Ready');

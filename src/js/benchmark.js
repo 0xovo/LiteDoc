@@ -2,10 +2,9 @@
  * LiteDoc - Hardware Benchmarking Tool
  */
 
-// Initialize PDF.js Worker (build.py will patch this URL with a data URI)
-if (typeof pdfjsLib !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
-}
+// PDF.js arrives as a module through the bridge and may not exist yet
+// when this classic script first runs; workerSrc is set by the bridge
+// and by main.js at boot. runBenchmark re-checks before converting.
 
 const benchmarkBtn = document.getElementById('run-benchmark-btn');
 if (benchmarkBtn) {
@@ -98,6 +97,9 @@ window.toggleBenchmarkView = function () {
 
 
 async function runBenchmark() {
+    if (typeof pdfjsLib !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc && window.__litedocPdfWorkerSrc) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = window.__litedocPdfWorkerSrc;
+    }
     const runBtn = document.getElementById('run-benchmark-btn');
     const resultsCard = document.getElementById('results-card');
     const logCard = document.getElementById('log-card');

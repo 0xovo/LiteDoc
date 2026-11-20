@@ -252,6 +252,35 @@ def inline_into_html(html: str, css_blob: str, js_blob: str, version: str, ai_wi
         if not p.exists():
             vendor_missing.append(rel)
             return m.group(0)
+        # PDF.js 6.5 is ESM-only: the bridge tag becomes a blob-URL module
+        # bridge. Both sources ride as base64 in a classic script (uniform,
+        # no </script> escaping hazards); the module decodes them, imports
+        # the library from a blob URL, and creates the worker blob URL
+        # (module workers cannot load from data URIs).
+        if rel == "vendor/pdfjs-bridge.mjs":
+            main_p = SRC_DIR / "vendor" / "pdf.min.mjs"
+            worker_p = SRC_DIR / "vendor" / "pdf.worker.min.mjs"
+            if not main_p.exists() or not worker_p.exists():
+                vendor_missing.append(rel)
+                return m.group(0)
+            main_b64 = base64.b64encode(main_p.read_bytes()).decode()
+            worker_b64 = base64.b64encode(worker_p.read_bytes()).decode()
+            n_vendor[0] += 1
+            return (
+                "<script>\n/* pdfjs 6.5.438 legacy ESM payloads (base64) */\n"
+                f'window.__pdfjsMainB64 = "{main_b64}";\n'
+                f'window.__pdfjsWorkerB64 = "{worker_b64}";\n'
+                "</script>\n"
+                '<script type="module">\n'
+                "const _b64Url = (b64) => { const bin = atob(b64); const bytes = new Uint8Array(bin.length); "
+                "for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); "
+                "return URL.createObjectURL(new Blob([bytes], { type: 'text/javascript' })); };\n"
+                "window.__litedocPdfWorkerSrc = _b64Url(window.__pdfjsWorkerB64);\n"
+                "const pdfjsLib = await import(_b64Url(window.__pdfjsMainB64));\n"
+                "window.pdfjsLib = pdfjsLib;\n"
+                "pdfjsLib.GlobalWorkerOptions.workerSrc = window.__litedocPdfWorkerSrc;\n"
+                "</script>"
+            )
         code = p.read_text(encoding="utf-8", errors="replace").replace("</script>", "<\\/script>")
         n_vendor[0] += 1
         return f"<script>\n/* {rel} */\n{code}\n</script>"
@@ -383,35 +412,26 @@ def build():
     # Prefer the local vendored copy over the CDN so the build is reproducible and
     # matches the pdf.min.js actually being shipped — a version skew between library
     # and worker breaks PDF parsing in confusing ways.
-    local_worker = SRC_DIR / "vendor" / "pdf.worker.min.js"
+    # PDF.js 6.5: the worker source itself is embedded by the bridge step
+    # in inline_into_html (blob URL, set as window.__litedocPdfWorkerSrc
+    # before DOMContentLoaded). All this step does is repoint every
+    # workerSrc string reference in the app bundle at that one global, so
+    # no code path can ask for a vendor file that is not in the bundle.
+    local_worker = SRC_DIR / "vendor" / "pdf.worker.min.mjs"
     if local_worker.exists():
-        pdf_worker_code = local_worker.read_text(encoding="utf-8", errors="replace")
-        worker_origin = str(local_worker.relative_to(SRC_DIR.parent))
-    else:
-        worker_origin = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"
-        pdf_worker_code = fetch_url(worker_origin)
-
-    if pdf_worker_code:
-        b64 = base64.b64encode(pdf_worker_code.encode()).decode()
-        data_uri = f"data:application/javascript;base64,{b64}"
-        # Bind the URI to one global and point every reference at it. Substituting the
-        # literal inline instead would embed ~1.5MB of base64 once per reference —
-        # there are 6, which alone bloated the bundle from ~3.5MB to 10.6MB.
         js_blob, n = re.subn(
-            r'["\'](?:https?://[^\s\'"]+|(?:\./)?(?:vendor|js)/)pdf\.worker[^\s\'"]*\.js["\']',
+            r'["\'](?:https?://[^\s\'"]+|(?:\./)?(?:vendor|js)/)pdf\.worker[^\s\'"]*\.m?js["\']',
             "window.__litedocPdfWorkerSrc",
             js_blob,
         )
         if n:
-            js_blob = (
-                f'window.__litedocPdfWorkerSrc = "{data_uri}";\n'
-                + js_blob
-            )
-            log(OK, f"pdf.worker: inlined once as data URI from {worker_origin} "
-                    f"({n} reference(s) repointed)")
+            log(OK, f"pdf.worker: {n} reference(s) repointed to the bridge blob URL "
+                    f"(worker embedded by the bridge step)")
         else:
             log(ERR, "pdf.worker: NO references patched — the worker will 404 at runtime. "
                      "Check how workerSrc is set in src/js/.")
+    else:
+        log(ERR, "pdf.worker: vendored pdf.worker.min.mjs missing — PDF.js will not load.")
 
     # Tesseract — just prepend the library, let it fetch worker/core from CDN
     # to avoid "NetworkError: Failed to execute 'importScripts' on 'WorkerGlobalScope'"

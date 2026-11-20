@@ -140,7 +140,11 @@ async function unlockPendingFile(idx) {
                 await window.__litedocAddons.triageFiles(state.pendingFiles, pdfjsLib, idx, result.password);
                 renderDropZone();
 
-                await result.pdf.destroy();
+                // PDF.js v6: destroy via the loading task, not the proxy.
+                try {
+                    if (result.pdf.__loadingTask) await result.pdf.__loadingTask.destroy();
+                    else if (typeof result.pdf.destroy === 'function') await result.pdf.destroy();
+                } catch (e) {}
             }
         } catch (err) {
             console.warn('Unlock cancelled or failed', err);

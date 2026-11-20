@@ -47,6 +47,7 @@ async function loadPdfWithPassword(arrayBuffer, fileName, password) {
     try {
         const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, password });
         const pdf = await loadingTask.promise;
+        pdf.__loadingTask = loadingTask;
         return { pdf, password };
     } catch (err) {
         if (err.name === 'PasswordException' || /password/i.test(err.message)) {
