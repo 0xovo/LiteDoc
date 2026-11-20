@@ -310,11 +310,29 @@
         return ws.reduce((a, x) => a + (x.confidence || 0), 0) / ws.length;
     }
 
+    // Phase 3 F3 bounds for the Q5 trial. The variant canvases allocate
+    // roughly 16 bytes per pixel of scratch arrays (Float32 grey values,
+    // a Float64 integral image, and the RGBA ImageData), so the trial
+    // canvas is capped at 16 megapixels: a full 300 DPI A4 page (about
+    // 8.7 MP) is untouched, and anything larger is scaled down to the
+    // ceiling instead of allocating without bound.
+    const MAX_VARIANT_PIXELS = 16000000;
+    // A page split into B regions must not turn into B base passes plus
+    // up to 2B variant passes. All regions of one page share a single
+    // budget of extra variant passes, counted on the parent task: 4
+    // passes, the cost of two full trials, however the regions divide it.
+    const MAX_VARIANT_PASSES_PER_PAGE = 4;
+
     function variantScale(src) {
         // Aim for roughly 300 DPI equivalent: core renders pages at
         // scale 2.0 (about 144 DPI), so smaller canvases get a 1.5x
         // upscale for the trial; already-large canvases stay as-is.
-        return src.width > 0 && src.width < 2500 ? 1.5 : 1;
+        let f = src.width > 0 && src.width < 2500 ? 1.5 : 1;
+        const px = src.width * src.height;
+        if (px > 0 && px * f * f > MAX_VARIANT_PIXELS) {
+            f = Math.sqrt(MAX_VARIANT_PIXELS / px);
+        }
+        return f;
     }
 
     function greyscaleCanvas(src) {
@@ -566,12 +584,27 @@
                                 try {
                                     const basePsm = task.isSubTask ? '11' : '3';
                                     let best = { name: `current (greyscale, PSM ${basePsm})`, conf: baseConf, data };
-                                    const variants = [];
-                                    const thr = adaptiveThresholdCanvas(processedPayload);
-                                    if (thr) variants.push({ name: `adaptive-threshold, PSM ${basePsm}`, canvas: thr, psm: basePsm });
-                                    const grey = greyscaleCanvas(processedPayload);
-                                    if (grey) variants.push({ name: 'greyscale, PSM 6', canvas: grey, psm: '6' });
-                                    for (const v of variants) {
+                                    // Shared per-page budget (Phase 3 F3):
+                                    // region subtasks count their variant
+                                    // passes against the parent page task, so
+                                    // a segmented page cannot multiply them.
+                                    // Variant canvases are built lazily so a
+                                    // spent budget costs no allocation.
+                                    const pageTask = (task.isSubTask && task.parent) ? task.parent : task;
+                                    if (pageTask.variantPassesUsed == null) pageTask.variantPassesUsed = 0;
+                                    const variantBuilders = [
+                                        { name: `adaptive-threshold, PSM ${basePsm}`, psm: basePsm, build: () => adaptiveThresholdCanvas(processedPayload) },
+                                        { name: 'greyscale, PSM 6', psm: '6', build: () => greyscaleCanvas(processedPayload) }
+                                    ];
+                                    for (const vb of variantBuilders) {
+                                        if (pageTask.variantPassesUsed >= MAX_VARIANT_PASSES_PER_PAGE) {
+                                            logToUI(`[Background OCR] Variant trial on task #${task.id}: per-page variant budget of ${MAX_VARIANT_PASSES_PER_PAGE} passes reached, skipping remaining variants.`, 'info');
+                                            break;
+                                        }
+                                        const vCanvas = vb.build();
+                                        if (!vCanvas) continue;
+                                        pageTask.variantPassesUsed++;
+                                        const v = { name: vb.name, canvas: vCanvas, psm: vb.psm };
                                         const altOpts = { user_defined_dpi: '300', tessedit_pageseg_mode: v.psm };
                                         if (task.lang && task.lang.includes('ara')) altOpts.tessedit_pageseg_mode = '3';
                                         const alt = await w.worker.recognize(v.canvas, altOpts, { blocks: true, words: true });
