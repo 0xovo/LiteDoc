@@ -19,6 +19,26 @@
     const taskDurations = [];
     const taskStartTimes = new Map();
 
+    // Tesseract.js v7 removed the top-level data.words array that v5
+    // returned: words now live inside blocks -> paragraphs -> lines.
+    // Flatten them back to the flat word list the rest of the OCR pipeline
+    // (and the core's OCR item builder) has always consumed.
+    function flattenWords(data) {
+        if (!data) return [];
+        if (Array.isArray(data.words) && data.words.length) return data.words;
+        const words = [];
+        for (const block of (data.blocks || [])) {
+            for (const para of (block.paragraphs || [])) {
+                for (const line of (para.lines || [])) {
+                    for (const w of (line.words || [])) {
+                        if (w && w.text) words.push(w);
+                    }
+                }
+            }
+        }
+        return words;
+    }
+
     function logToUI(msg, type = 'info') {
         console.log(msg);
         if (typeof window !== 'undefined' && typeof window.logToTerminal === 'function') {
@@ -464,8 +484,8 @@
                         // names a different language, re-OCR this task once with
                         // the right "<script>+eng" combo.
                         if (!task.scriptRetryDone && task.wasAutoLang && !task.isSubTask
-                                && data && data.words && processedPayload && processedPayload.getContext) {
-                            const low = data.words.filter(x => (x.confidence || 0) < 50
+                                && data && processedPayload && processedPayload.getContext) {
+                            const low = flattenWords(data).filter(x => (x.confidence || 0) < 50
                                 && x.text && x.text.trim().length > 1 && x.bbox);
                             if (low.length >= 3) {
                                 let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
@@ -498,7 +518,7 @@
 
                         w.pagesProcessed++;
 
-                        const resultObj = { text: data ? data.text : '', words: data ? data.words : [] };
+                        const resultObj = { text: data ? data.text : '', words: data ? flattenWords(data) : [] };
                         if (task.isSubTask) {
                             task.resolvedData = resultObj;
                             task.done = true;

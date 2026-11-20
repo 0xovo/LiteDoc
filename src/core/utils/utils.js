@@ -1,7 +1,11 @@
 
 // script classifier
 function scriptBucket(cp) {
-    if (cp >= 0x0000 && cp <= 0x007F) return 'latin-basic';
+    // C0 and C1 control characters are never real text content. A text layer
+    // that carries them in quantity is a broken glyph mapping (subset fonts
+    // whose ToUnicode maps point at control slots), not Latin prose.
+    if ((cp >= 0x0000 && cp <= 0x001F) || (cp >= 0x007F && cp <= 0x009F)) return 'control';
+    if (cp >= 0x0020 && cp <= 0x007F) return 'latin-basic';
     if (cp >= 0x0080 && cp <= 0x024F) return 'latin-ext';
     if (cp >= 0x0250 && cp <= 0x02FF) return 'ipa';
     if (cp >= 0x0300 && cp <= 0x036F) return 'combining';
@@ -49,8 +53,29 @@ const SUSPICIOUS_BUCKETS = new Set([
     'braille', 'mongolian', 'cjk-radicals', 'cjk-symbols',
     'hiragana', 'katakana', 'enclosed-cjk', 'cjk-compat',
     'cjk-unified', 'pua', 'pua-supp', 'specials', 'yi',
-    'misc-symbols', 'control-pics'
+    'misc-symbols', 'control-pics', 'control'
 ]);
+
+// Targeted text hygiene (Q6): expand ONLY the characters that are known
+// compatibility forms: Latin ligatures (U+FB00 to U+FB04) and Arabic
+// presentation forms (U+FB50 to U+FDFF, U+FE70 to U+FEFF). Each such char
+// is normalised on its own, which maps it to its standard form. This is
+// deliberately NOT a blanket NFKC pass over the string: NFKC also rewrites
+// fractions, superscripts, and the micro sign, which the math path needs
+// exactly as written.
+function expandText(str) {
+    if (!str) return str;
+    let out = '';
+    for (const ch of str) {
+        const cp = ch.codePointAt(0);
+        if ((cp >= 0xFB00 && cp <= 0xFB04) || (cp >= 0xFB50 && cp <= 0xFDFF) || (cp >= 0xFE70 && cp <= 0xFEFF)) {
+            out += ch.normalize('NFKC');
+        } else {
+            out += ch;
+        }
+    }
+    return out;
+}
 
 // corruption detector
 // A lone bullet glyph: Wingdings/Symbol fonts put list markers in the Private
@@ -68,14 +93,15 @@ function detectCorruptedFonts(rawItems) {
     for (const item of rawItems) {
         if (isSymbolGlyph(item.str)) continue;
         const fn = item.fontName || '__unknown__';
-        if (!byFont[fn]) byFont[fn] = { chars: 0, suspicious: 0, buckets: new Set() };
+        if (!byFont[fn]) byFont[fn] = { chars: 0, suspicious: 0, controls: 0, buckets: new Set() };
         const entry = byFont[fn];
         for (const ch of (item.str || '')) {
             const cp = ch.codePointAt(0);
-            if (cp <= 0x20) continue; // skip whitespace
+            if (cp === 0x20 || cp === 0x09 || cp === 0x0A || cp === 0x0D) continue; // real whitespace
             entry.chars++;
             const bkt = scriptBucket(cp);
             entry.buckets.add(bkt);
+            if (bkt === 'control') entry.controls++;
             if (SUSPICIOUS_BUCKETS.has(bkt)) entry.suspicious++;
         }
     }
@@ -84,6 +110,13 @@ function detectCorruptedFonts(rawItems) {
     for (const [fn, stats] of Object.entries(byFont)) {
         if (stats.chars < 3) continue;
         const suspRatio = stats.suspicious / stats.chars;
+
+        // Control characters in quantity are a broken glyph mapping on
+        // their own, even when the rest of the font reads as a real script
+        // (the WeasyPrint Arabic subset case: real Arabic letters mixed
+        // with C0 controls and stray Latin for the missing glyphs).
+        const ctrlRatio = (stats.controls || 0) / stats.chars;
+        if (ctrlRatio > 0.02) { corrupted.add(fn); continue; }
 
         // hard rule > 30%
         if (suspRatio > 0.30) { corrupted.add(fn); continue; }
@@ -117,7 +150,7 @@ function itemGibberishScore(str, fontName, corruptedFonts) {
 
     for (const ch of clean) {
         const cp = ch.codePointAt(0);
-        if (cp <= 0x20) continue;
+        if (cp === 0x20) continue; // controls stay: they are the garbage signal
         totalScored++;
         const bkt = scriptBucket(cp);
         buckets.add(bkt);
@@ -150,6 +183,22 @@ function joinLineItems(items, config) {
     const spaceSpans = items.filter(it => it.str && !it.str.trim()).map(it => [it.x, it.x + (it.width || 0)]);
     if (!validItems.length) return '';
     const sorted = [...validItems].sort((a, b) => a.x - b.x);
+    // Per-line gap-fraction inference (Q6): a line's own gap distribution
+    // says more than a fixed threshold. Kerning gaps cluster near zero and
+    // word gaps sit well above them, so when the line has enough gaps to
+    // judge, cap the space threshold at 2.2x the median positive gap. The
+    // cap only ever lowers the fixed threshold, and never below 6 percent
+    // of the glyph height, so loose lines keep the old behaviour.
+    const lineGaps = [];
+    for (let i = 1; i < sorted.length; i++) {
+        const g = sorted[i].x - (sorted[i - 1].x + (sorted[i - 1].width || 0));
+        if (g > 0) lineGaps.push(g);
+    }
+    let medianGap = 0;
+    if (lineGaps.length >= 3) {
+        const sg = [...lineGaps].sort((a, b) => a - b);
+        medianGap = sg[Math.floor(sg.length / 2)];
+    }
     let result = sorted[0].str;
     for (let i = 1; i < sorted.length; i++) {
         const prev = sorted[i - 1];
@@ -160,7 +209,11 @@ function joinLineItems(items, config) {
 
         // Punctuation kerning is tighter. Lower the space threshold if the previous text ends with punctuation.
         const endsWithPunctuation = /[.,;:!?]/.test(prev.str.trim().slice(-1));
-        const spaceThreshold = (prev.height || 10) * (endsWithPunctuation ? 0.08 : 0.18) * hm;
+        let spaceThreshold = (prev.height || 10) * (endsWithPunctuation ? 0.08 : 0.18) * hm;
+        if (medianGap > 0) {
+            const adaptive = Math.max(medianGap * 2.2, (prev.height || 10) * 0.06);
+            spaceThreshold = Math.min(spaceThreshold, adaptive);
+        }
 
         // Subscript / Superscript / Drop-cap logic
         const isDropCap = prev.str.length === 1 && prev.height > (curr.height * 1.5) && gap < curr.height;
@@ -285,7 +338,7 @@ function buildFingerprintSet(allPageLines, totalPages) {
     return repeating;
 }
 
-export { scriptBucket, isSymbolGlyph, detectCorruptedFonts, itemGibberishScore, joinLineItems, detectColumnSplit, classifyHeadings, headingLevel, buildFingerprintSet };
+export { scriptBucket, isSymbolGlyph, expandText, detectCorruptedFonts, itemGibberishScore, joinLineItems, detectColumnSplit, classifyHeadings, headingLevel, buildFingerprintSet };
 
 // global ace sync flag removed - consolidated in state.js
 

@@ -3,7 +3,11 @@ var LiteDocCore = (function () {
 
     // script classifier
     function scriptBucket(cp) {
-        if (cp >= 0x0000 && cp <= 0x007F) return 'latin-basic';
+        // C0 and C1 control characters are never real text content. A text layer
+        // that carries them in quantity is a broken glyph mapping (subset fonts
+        // whose ToUnicode maps point at control slots), not Latin prose.
+        if ((cp >= 0x0000 && cp <= 0x001F) || (cp >= 0x007F && cp <= 0x009F)) return 'control';
+        if (cp >= 0x0020 && cp <= 0x007F) return 'latin-basic';
         if (cp >= 0x0080 && cp <= 0x024F) return 'latin-ext';
         if (cp >= 0x0250 && cp <= 0x02FF) return 'ipa';
         if (cp >= 0x0300 && cp <= 0x036F) return 'combining';
@@ -51,8 +55,29 @@ var LiteDocCore = (function () {
         'braille', 'mongolian', 'cjk-radicals', 'cjk-symbols',
         'hiragana', 'katakana', 'enclosed-cjk', 'cjk-compat',
         'cjk-unified', 'pua', 'pua-supp', 'specials', 'yi',
-        'misc-symbols', 'control-pics'
+        'misc-symbols', 'control-pics', 'control'
     ]);
+
+    // Targeted text hygiene (Q6): expand ONLY the characters that are known
+    // compatibility forms: Latin ligatures (U+FB00 to U+FB04) and Arabic
+    // presentation forms (U+FB50 to U+FDFF, U+FE70 to U+FEFF). Each such char
+    // is normalised on its own, which maps it to its standard form. This is
+    // deliberately NOT a blanket NFKC pass over the string: NFKC also rewrites
+    // fractions, superscripts, and the micro sign, which the math path needs
+    // exactly as written.
+    function expandText(str) {
+        if (!str) return str;
+        let out = '';
+        for (const ch of str) {
+            const cp = ch.codePointAt(0);
+            if ((cp >= 0xFB00 && cp <= 0xFB04) || (cp >= 0xFB50 && cp <= 0xFDFF) || (cp >= 0xFE70 && cp <= 0xFEFF)) {
+                out += ch.normalize('NFKC');
+            } else {
+                out += ch;
+            }
+        }
+        return out;
+    }
 
     // A lone bullet glyph: Wingdings/Symbol fonts put list markers in the Private
     // Use Area (U+F0A7, U+F0FC ...). One isolated PUA char is a list marker, not a broken encoding.
@@ -70,14 +95,15 @@ var LiteDocCore = (function () {
         for (const item of rawItems) {
             if (isSymbolGlyph(item.str)) continue;
             const fn = item.fontName || '__unknown__';
-            if (!byFont[fn]) byFont[fn] = { chars: 0, suspicious: 0, buckets: new Set() };
+            if (!byFont[fn]) byFont[fn] = { chars: 0, suspicious: 0, controls: 0, buckets: new Set() };
             const entry = byFont[fn];
             for (const ch of (item.str || '')) {
                 const cp = ch.codePointAt(0);
-                if (cp <= 0x20) continue; // skip whitespace
+                if (cp === 0x20 || cp === 0x09 || cp === 0x0A || cp === 0x0D) continue; // real whitespace
                 entry.chars++;
                 const bkt = scriptBucket(cp);
                 entry.buckets.add(bkt);
+                if (bkt === 'control') entry.controls++;
                 if (SUSPICIOUS_BUCKETS.has(bkt)) entry.suspicious++;
             }
         }
@@ -86,6 +112,13 @@ var LiteDocCore = (function () {
         for (const [fn, stats] of Object.entries(byFont)) {
             if (stats.chars < 3) continue;
             const suspRatio = stats.suspicious / stats.chars;
+
+            // Control characters in quantity are a broken glyph mapping on
+            // their own, even when the rest of the font reads as a real script
+            // (the WeasyPrint Arabic subset case: real Arabic letters mixed
+            // with C0 controls and stray Latin for the missing glyphs).
+            const ctrlRatio = (stats.controls || 0) / stats.chars;
+            if (ctrlRatio > 0.02) { corrupted.add(fn); continue; }
 
             // hard rule > 30%
             if (suspRatio > 0.30) { corrupted.add(fn); continue; }
@@ -119,7 +152,7 @@ var LiteDocCore = (function () {
 
         for (const ch of clean) {
             const cp = ch.codePointAt(0);
-            if (cp <= 0x20) continue;
+            if (cp === 0x20) continue; // controls stay: they are the garbage signal
             totalScored++;
             const bkt = scriptBucket(cp);
             buckets.add(bkt);
@@ -152,6 +185,22 @@ var LiteDocCore = (function () {
         const spaceSpans = items.filter(it => it.str && !it.str.trim()).map(it => [it.x, it.x + (it.width || 0)]);
         if (!validItems.length) return '';
         const sorted = [...validItems].sort((a, b) => a.x - b.x);
+        // Per-line gap-fraction inference (Q6): a line's own gap distribution
+        // says more than a fixed threshold. Kerning gaps cluster near zero and
+        // word gaps sit well above them, so when the line has enough gaps to
+        // judge, cap the space threshold at 2.2x the median positive gap. The
+        // cap only ever lowers the fixed threshold, and never below 6 percent
+        // of the glyph height, so loose lines keep the old behaviour.
+        const lineGaps = [];
+        for (let i = 1; i < sorted.length; i++) {
+            const g = sorted[i].x - (sorted[i - 1].x + (sorted[i - 1].width || 0));
+            if (g > 0) lineGaps.push(g);
+        }
+        let medianGap = 0;
+        if (lineGaps.length >= 3) {
+            const sg = [...lineGaps].sort((a, b) => a - b);
+            medianGap = sg[Math.floor(sg.length / 2)];
+        }
         let result = sorted[0].str;
         for (let i = 1; i < sorted.length; i++) {
             const prev = sorted[i - 1];
@@ -162,7 +211,11 @@ var LiteDocCore = (function () {
 
             // Punctuation kerning is tighter. Lower the space threshold if the previous text ends with punctuation.
             const endsWithPunctuation = /[.,;:!?]/.test(prev.str.trim().slice(-1));
-            const spaceThreshold = (prev.height || 10) * (endsWithPunctuation ? 0.08 : 0.18) * hm;
+            let spaceThreshold = (prev.height || 10) * (endsWithPunctuation ? 0.08 : 0.18) * hm;
+            if (medianGap > 0) {
+                const adaptive = Math.max(medianGap * 2.2, (prev.height || 10) * 0.06);
+                spaceThreshold = Math.min(spaceThreshold, adaptive);
+            }
 
             // Subscript / Superscript / Drop-cap logic
             const isDropCap = prev.str.length === 1 && prev.height > (curr.height * 1.5) && gap < curr.height;
@@ -1796,6 +1849,52 @@ var LiteDocCore = (function () {
 
                         const effectiveCorruptedFonts = (fontMode === 'gibberish') ? new Set() : corruptedFonts;
 
+                        // OCR words to items, shared by the no-text-layer path and
+                        // the Q6 corrupted-font rescue. Words are banded by line:
+                        // Tesseract word bboxes vary with ascenders and descenders,
+                        // so words on one visual line need one shared y or the line
+                        // grouper tears the line into interleaved fragments.
+                        // Coordinates come from a scale 2.0 render, hence the /2.
+                        const ocrWordsToItems = (words, canvasH) => {
+                            const out = [];
+                            const ocrWords = (words || []).filter(w => w.bbox && w.text && w.text.trim());
+                            ocrWords.sort((a, b) => ((a.bbox.y0 + a.bbox.y1) - (b.bbox.y0 + b.bbox.y1)) || (a.bbox.x0 - b.bbox.x0));
+                            const ocrBands = [];
+                            for (const w of ocrWords) {
+                                const mid = (w.bbox.y0 + w.bbox.y1) / 2;
+                                const h = w.bbox.y1 - w.bbox.y0;
+                                const band = ocrBands[ocrBands.length - 1];
+                                if (band && Math.abs(mid - band.midSum / band.words.length) < 0.6 * Math.max(band.hSum / band.words.length, h)) {
+                                    band.words.push(w);
+                                    band.midSum += mid;
+                                    band.hSum += h;
+                                    band.hMax = Math.max(band.hMax, h);
+                                } else {
+                                    ocrBands.push({ words: [w], midSum: mid, hSum: h, hMax: h });
+                                }
+                            }
+                            for (const band of ocrBands) {
+                                const bandY = (canvasH - band.midSum / band.words.length) / 2.0;
+                                const bandH = (band.hSum / band.words.length) / 2.0;
+                                for (const w of band.words) {
+                                    out.push({
+                                        str: w.text,
+                                        x: w.bbox.x0 / 2.0,
+                                        y: bandY,
+                                        width: (w.bbox.x1 - w.bbox.x0) / 2.0,
+                                        height: bandH,
+                                        fontSize: band.hMax / 2.0,
+                                        isBold: false,
+                                        fontName: w.font_name || 'OCR_Font',
+                                        garbage: false,
+                                        gScore: 0,
+                                        isOcr: true
+                                    });
+                                }
+                            }
+                            return out;
+                        };
+
                         const rawItems = textContent.items
                             .filter(item => item.str && item.str.length > 0)
                             .map(item => {
@@ -1811,7 +1910,7 @@ var LiteDocCore = (function () {
                                 const inMargin = f > pageH * 0.96 || f < pageH * 0.04 || e < pageW * 0.04 || e > pageW * 0.96;
                                 const isMarginNoise = inMargin && (Math.abs(b) > 0.01 || /^[\s\divxlcIVXLC.\-–—\/|]*$/.test(item.str) || item.str.trim().length <= 2);
                                 return {
-                                    str: item.str, x: e, y: f, width, height: item.height || Math.abs(a) || 12,
+                                    str: expandText(item.str), x: e, y: f, width, height: item.height || Math.abs(a) || 12,
                                     fontSize, isBold, fontName,
                                     garbage: score > activeConfig$1.garbageScoreThreshold || isMarginNoise,
                                     gScore: score,
@@ -1827,6 +1926,41 @@ var LiteDocCore = (function () {
                                 return posMatch && existing.str.trim() === item.str.trim();
                             });
                             if (!isDup) items.push(item);
+                        }
+
+                        // Q6 corrupted-font OCR rescue: under the "clean" auto-resolve
+                        // action, when most of a page sits in fonts scored as corrupted,
+                        // the text layer cannot be trusted at all. Render the page and
+                        // OCR it instead of emitting glyph garbage or dropping the
+                        // page. If OCR recovers nothing usable, clean filtering below
+                        // still applies. The rescue runs when scanned-page OCR is on,
+                        // and in headless mode where "clean" is the caller's choice.
+                        if (fontMode === 'clean' && pageHasCorruption && typeof window !== 'undefined' && window.__litedocOCR
+                            && (__litedocAddons.ocrEnabled() || navigator.webdriver)) {
+                            const corruptShare = items.length ? items.filter(it => corruptedFonts.has(it.fontName)).length / items.length : 0;
+                            if (corruptShare >= 0.5) {
+                                try {
+                                    const rvp2 = page.getViewport({ scale: 2.0 });
+                                    const rc2 = document.createElement('canvas');
+                                    rc2.width = rvp2.width; rc2.height = rvp2.height;
+                                    const rctx2 = rc2.getContext('2d');
+                                    rctx2.fillStyle = '#ffffff';
+                                    rctx2.fillRect(0, 0, rc2.width, rc2.height);
+                                    await page.render({ canvasContext: rctx2, viewport: rvp2 }).promise;
+                                    const rescue = await __litedocAddons.ocrCanvas(rc2, file.name, { ocrLang: docOcrLang, ocrEnabled: true });
+                                    const rescueItems = rescue && rescue.words ? ocrWordsToItems(rescue.words, rc2.height) : [];
+                                    if (rescueItems.length >= 3) {
+                                        items.length = 0;
+                                        items.push(...rescueItems);
+                                        logToTerminal(`[Page ${pageNum}/${pdfDoc.numPages}] Corrupted font encoding: text layer replaced by OCR (${rescueItems.length} items).`, 'warn');
+                                    } else {
+                                        logToTerminal(`[Page ${pageNum}/${pdfDoc.numPages}] Corrupted font encoding: OCR rescue recovered nothing, clean filtering applies.`, 'warn');
+                                    }
+                                    rc2.width = 0; rc2.height = 0;
+                                } catch (e) {
+                                    logToTerminal(`[Page ${pageNum}/${pdfDoc.numPages}] OCR rescue failed: ${e.message || e}`, 'warn');
+                                }
+                            }
                         }
 
                         if (!items.length) {
@@ -1847,47 +1981,7 @@ var LiteDocCore = (function () {
                                 
                                 if (ocrResult && ocrResult.words && ocrResult.words.length > 0) {
                                     logToTerminal(`[Page ${pageNum}/${pdfDoc.numPages}] OCR finished: recovered ${ocrResult.words.length} spatial words via multi-region recognition.`, 'success');
-                                    const pageH_ocr = canv.height;
-                                    // Need to scale coordinates back to page.view dimensions!
-                                    // Since we rendered at scale: 2.0, OCR coordinates are 2x the standard PDF coordinates!
-                                    // Tesseract word bboxes vary with ascenders/descenders, so bbox centres of
-                                    // words on one visual line spread by several px; the line grouper needs one
-                                    // shared y per line or it tears lines into interleaved fragments.
-                                    const ocrWords = ocrResult.words.filter(w => w.bbox && w.text && w.text.trim());
-                                    ocrWords.sort((a, b) => ((a.bbox.y0 + a.bbox.y1) - (b.bbox.y0 + b.bbox.y1)) || (a.bbox.x0 - b.bbox.x0));
-                                    const ocrBands = [];
-                                    for (const w of ocrWords) {
-                                        const mid = (w.bbox.y0 + w.bbox.y1) / 2;
-                                        const h = w.bbox.y1 - w.bbox.y0;
-                                        const band = ocrBands[ocrBands.length - 1];
-                                        if (band && Math.abs(mid - band.midSum / band.words.length) < 0.6 * Math.max(band.hSum / band.words.length, h)) {
-                                            band.words.push(w);
-                                            band.midSum += mid;
-                                            band.hSum += h;
-                                            band.hMax = Math.max(band.hMax, h);
-                                        } else {
-                                            ocrBands.push({ words: [w], midSum: mid, hSum: h, hMax: h });
-                                        }
-                                    }
-                                    for (const band of ocrBands) {
-                                        const bandY = (pageH_ocr - band.midSum / band.words.length) / 2.0;
-                                        const bandH = (band.hSum / band.words.length) / 2.0;
-                                        for (const w of band.words) {
-                                            items.push({
-                                                str: w.text,
-                                                x: w.bbox.x0 / 2.0,
-                                                y: bandY,
-                                                width: (w.bbox.x1 - w.bbox.x0) / 2.0,
-                                                height: bandH,
-                                                fontSize: band.hMax / 2.0,
-                                                isBold: false,
-                                                fontName: w.font_name || 'OCR_Font',
-                                                garbage: false,
-                                                gScore: 0,
-                                                isOcr: true
-                                            });
-                                        }
-                                    }
+                                    items.push(...ocrWordsToItems(ocrResult.words, canv.height));
                                 } else if (ocrResult && ocrResult.text && ocrResult.text.trim()) {
                                     mdText += (pageNum > 1 ? '\n\n---\n\n' : '') + `## Page ${pageNum} (OCR)\n\n` + ocrResult.text;
                                     page.cleanup();

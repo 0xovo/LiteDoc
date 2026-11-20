@@ -664,6 +664,50 @@ export const executePdfConversion = async function (files) {
 
                     const effectiveCorruptedFonts = (fontMode === 'gibberish') ? new Set() : corruptedFonts;
 
+                    // OCR words to items, shared by the no-text-layer path and
+                    // the Q6 corrupted-font rescue. See litedoc-core.js for the
+                    // banding rationale. Coordinates come from a scale 2.0
+                    // render, hence the /2.
+                    const ocrWordsToItems = (words, canvasH) => {
+                        const out = [];
+                        const ocrWords = (words || []).filter(w => w.bbox && w.text && w.text.trim());
+                        ocrWords.sort((a, b) => ((a.bbox.y0 + a.bbox.y1) - (b.bbox.y0 + b.bbox.y1)) || (a.bbox.x0 - b.bbox.x0));
+                        const ocrBands = [];
+                        for (const w of ocrWords) {
+                            const mid = (w.bbox.y0 + w.bbox.y1) / 2;
+                            const h = w.bbox.y1 - w.bbox.y0;
+                            const band = ocrBands[ocrBands.length - 1];
+                            if (band && Math.abs(mid - band.midSum / band.words.length) < 0.6 * Math.max(band.hSum / band.words.length, h)) {
+                                band.words.push(w);
+                                band.midSum += mid;
+                                band.hSum += h;
+                                band.hMax = Math.max(band.hMax, h);
+                            } else {
+                                ocrBands.push({ words: [w], midSum: mid, hSum: h, hMax: h });
+                            }
+                        }
+                        for (const band of ocrBands) {
+                            const bandY = (canvasH - band.midSum / band.words.length) / 2.0;
+                            const bandH = (band.hSum / band.words.length) / 2.0;
+                            for (const w of band.words) {
+                                out.push({
+                                    str: w.text,
+                                    x: w.bbox.x0 / 2.0,
+                                    y: bandY,
+                                    width: (w.bbox.x1 - w.bbox.x0) / 2.0,
+                                    height: bandH,
+                                    fontSize: band.hMax / 2.0,
+                                    isBold: false,
+                                    fontName: w.font_name || 'OCR_Font',
+                                    garbage: false,
+                                    gScore: 0,
+                                    isOcr: true
+                                });
+                            }
+                        }
+                        return out;
+                    };
+
                     const rawItems = textContent.items
                         .filter(item => item.str && item.str.length > 0)
                         .map(item => {
@@ -679,7 +723,7 @@ export const executePdfConversion = async function (files) {
                             const inMargin = f > pageH * 0.96 || f < pageH * 0.04 || e < pageW * 0.04 || e > pageW * 0.96;
                             const isMarginNoise = inMargin && (Math.abs(b) > 0.01 || /^[\s\divxlcIVXLC.\-–—\/|]*$/.test(item.str) || item.str.trim().length <= 2);
                             return {
-                                str: item.str, x: e, y: f, width, height: item.height || Math.abs(a) || 12,
+                                str: utils.expandText(item.str), x: e, y: f, width, height: item.height || Math.abs(a) || 12,
                                 fontSize, isBold, fontName,
                                 garbage: score > activeConfig.garbageScoreThreshold || isMarginNoise,
                                 gScore: score,
@@ -695,6 +739,33 @@ export const executePdfConversion = async function (files) {
                             return posMatch && existing.str.trim() === item.str.trim();
                         });
                         if (!isDup) items.push(item);
+                    }
+
+                    // Q6 corrupted-font OCR rescue: see litedoc-core.js.
+                    if (fontMode === 'clean' && pageHasCorruption && typeof window !== 'undefined' && window.__litedocOCR
+                        && (addons.__litedocAddons.ocrEnabled() || navigator.webdriver)) {
+                        const corruptShare = items.length ? items.filter(it => corruptedFonts.has(it.fontName)).length / items.length : 0;
+                        if (corruptShare >= 0.5) {
+                            try {
+                                const rvp2 = page.getViewport({ scale: 2.0 });
+                                const rc2 = document.createElement('canvas');
+                                rc2.width = rvp2.width; rc2.height = rvp2.height;
+                                const rctx2 = rc2.getContext('2d');
+                                rctx2.fillStyle = '#ffffff';
+                                rctx2.fillRect(0, 0, rc2.width, rc2.height);
+                                await page.render({ canvasContext: rctx2, viewport: rvp2 }).promise;
+                                const rescue = await addons.__litedocAddons.ocrCanvas(rc2, file.name, { ocrLang: docOcrLang, ocrEnabled: true });
+                                const rescueItems = rescue && rescue.words ? ocrWordsToItems(rescue.words, rc2.height) : [];
+                                if (rescueItems.length >= 3) {
+                                    items.length = 0;
+                                    items.push(...rescueItems);
+                                    logToTerminal(`[Page ${pageNum}] Corrupted font encoding: text layer replaced by OCR (${rescueItems.length} items).`, 'warn');
+                                }
+                                rc2.width = 0; rc2.height = 0;
+                            } catch (e) {
+                                logToTerminal(`[Page ${pageNum}] OCR rescue failed: ${e.message || e}`, 'warn');
+                            }
+                        }
                     }
 
                     if (!items.length) {
@@ -714,47 +785,7 @@ export const executePdfConversion = async function (files) {
                             const ocrResult = await addons.__litedocAddons.ocrCanvas(canv, file.name, { ocrLang: docOcrLang, ocrEnabled: true });
                             
                             if (ocrResult && ocrResult.words && ocrResult.words.length > 0) {
-                                const pageH_ocr = canv.height;
-                                // Need to scale coordinates back to page.view dimensions!
-                                // Since we rendered at scale: 2.0, OCR coordinates are 2x the standard PDF coordinates!
-                                // Tesseract word bboxes vary with ascenders/descenders, so bbox centres of
-                                // words on one visual line spread by several px; the line grouper needs one
-                                // shared y per line or it tears lines into interleaved fragments.
-                                const ocrWords = ocrResult.words.filter(w => w.bbox && w.text && w.text.trim());
-                                ocrWords.sort((a, b) => ((a.bbox.y0 + a.bbox.y1) - (b.bbox.y0 + b.bbox.y1)) || (a.bbox.x0 - b.bbox.x0));
-                                const ocrBands = [];
-                                for (const w of ocrWords) {
-                                    const mid = (w.bbox.y0 + w.bbox.y1) / 2;
-                                    const h = w.bbox.y1 - w.bbox.y0;
-                                    const band = ocrBands[ocrBands.length - 1];
-                                    if (band && Math.abs(mid - band.midSum / band.words.length) < 0.6 * Math.max(band.hSum / band.words.length, h)) {
-                                        band.words.push(w);
-                                        band.midSum += mid;
-                                        band.hSum += h;
-                                        band.hMax = Math.max(band.hMax, h);
-                                    } else {
-                                        ocrBands.push({ words: [w], midSum: mid, hSum: h, hMax: h });
-                                    }
-                                }
-                                for (const band of ocrBands) {
-                                    const bandY = (pageH_ocr - band.midSum / band.words.length) / 2.0;
-                                    const bandH = (band.hSum / band.words.length) / 2.0;
-                                    for (const w of band.words) {
-                                        items.push({
-                                            str: w.text,
-                                            x: w.bbox.x0 / 2.0,
-                                            y: bandY,
-                                            width: (w.bbox.x1 - w.bbox.x0) / 2.0,
-                                            height: bandH,
-                                            fontSize: band.hMax / 2.0,
-                                            isBold: false,
-                                            fontName: w.font_name || 'OCR_Font',
-                                            garbage: false,
-                                            gScore: 0,
-                                            isOcr: true
-                                        });
-                                    }
-                                }
+                                items.push(...ocrWordsToItems(ocrResult.words, canv.height));
                             } else if (ocrResult && ocrResult.text && ocrResult.text.trim()) {
                                 mdText += (pageNum > 1 ? '\n\n---\n\n' : '') + `## Page ${pageNum} (OCR)\n\n` + ocrResult.text;
                                 page.cleanup();

@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    scriptBucket, detectCorruptedFonts, itemGibberishScore, joinLineItems,
+    scriptBucket, expandText, detectCorruptedFonts, itemGibberishScore, joinLineItems,
     detectColumnSplit, classifyHeadings, headingLevel, buildFingerprintSet,
 } from '../../src/core/utils/utils.js';
 
@@ -118,6 +118,51 @@ test('buildFingerprintSet: repeated page header detected, needs 3+ pages', () =>
     assert.ok(set.has(header));
     assert.ok(!set.has('unique one'));
     assert.equal(buildFingerprintSet(lines, 2).size, 0);
+});
+
+test('scriptBucket: C0 controls are their own bucket, not Latin', () => {
+    assert.equal(scriptBucket(0x12), 'control');
+    assert.equal(scriptBucket(0x7F), 'control');
+    assert.equal(scriptBucket(0x20), 'latin-basic');
+});
+
+test('expandText: ligatures and Arabic presentation forms expand, math untouched', () => {
+    assert.equal(expandText('\ufb01nal o\ufb03ce'), 'final office');
+    assert.equal(expandText('\ufedf\ufe8d'), 'لا');
+    // Not a blanket NFKC: fraction, superscript, and micro sign stay as written.
+    assert.equal(expandText('\u00bd x\u00b2 \u00b5m'), '\u00bd x\u00b2 \u00b5m');
+    assert.equal(expandText('plain text'), 'plain text');
+});
+
+test('detectCorruptedFonts: flags a font mixing real script with C0 controls', () => {
+    // The WeasyPrint Arabic subset shape: mostly real Arabic, a few percent
+    // control characters where glyph mappings were dropped.
+    const good = 'المحاضرة الثالثة في الفيزياء';
+    const bad = good + '\u0012\u0015\u001d' + good;
+    const corrupted = detectCorruptedFonts([
+        { fontName: 'SubsetArabic', str: bad },
+        { fontName: 'CleanArabic', str: good },
+    ]);
+    assert.ok(corrupted.has('SubsetArabic'));
+    assert.ok(!corrupted.has('CleanArabic'));
+});
+
+test('itemGibberishScore: control-heavy text scores above the garbage threshold', () => {
+    const s = itemGibberishScore('abc\u0012\u0015def\u001d', 'F1', new Set());
+    assert.ok(s > 0.2, `score ${s} should exceed 0.2`);
+});
+
+test('joinLineItems: per-line gap distribution splits tightly kerned words', () => {
+    // Kerning gaps of 0.4px and word gaps of 1.6px at height 10: the fixed
+    // 1.8px threshold would glue the words; the line median must not.
+    const items = [];
+    let x = 0;
+    for (const w of ['aa', 'bb', 'cc', 'dd']) {
+        items.push({ str: w, x, width: 10, height: 10 });
+        x += 10 + 0.4;
+    }
+    items.push({ str: 'ee', x: x + 1.2, width: 10, height: 10 });
+    assert.equal(joinLineItems(items, {}), 'aabbccdd ee');
 });
 
 test('detectColumnSplit: finds gutter in a two-column layout', () => {
