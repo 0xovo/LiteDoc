@@ -788,6 +788,30 @@ var LiteDocCore = (function () {
             }
 
             logToTerminal(`Table detection: Found table with ${grid.length} rows, ${numCols} cols`, 'success');
+        // Q4 candidate scoring: lattice evidence (rectangular fill plus
+        // column-boundary alignment) against stream evidence (numeric
+        // alignment plus fill). Both scores and the winning path are
+        // recorded on the page layout; the markdown reconstruction is
+        // shared, and the record documents which evidence dominated.
+        const cellTextsAll = [];
+        grid.forEach(r => r.rowData.forEach(c => { if (c.trim()) cellTextsAll.push(c.trim()); }));
+        const numericShare = cellTextsAll.length ? cellTextsAll.filter(c => /^[-+]?[0-9][0-9.,:%\s]*$/.test(c)).length / cellTextsAll.length : 0;
+        let alignHits = 0, alignTotal = 0;
+        for (const line of blockLines) {
+            for (const cell of line.cells) {
+                alignTotal++;
+                let best = Infinity;
+                for (const fc of finalCols) best = Math.min(best, Math.abs(cell.xMin - fc));
+                if (best <= 10) alignHits++;
+            }
+        }
+        const alignmentShare = alignTotal ? alignHits / alignTotal : 0;
+        const latticeScore = Math.round((0.5 * fillRatio + 0.5 * alignmentShare) * 100) / 100;
+        const streamScore = Math.round((0.5 * fillRatio + 0.5 * numericShare) * 100) / 100;
+        const tablePath = latticeScore >= streamScore ? 'lattice' : 'stream';
+        const tableConfidence = Math.max(latticeScore, streamScore);
+        logToTerminal(`Table detection: evidence lattice ${latticeScore}, stream ${streamScore}, path ${tablePath}`, 'info');
+
 
             for (const r of grid) {
                 for (const cell of r.line.cells) {
@@ -844,7 +868,7 @@ var LiteDocCore = (function () {
                 }
             }
 
-            if (ctx.pageLayout) ctx.pageLayout.tables.push({ rows: grid.map(r => r.rowData.map(esc)) });
+            if (ctx.pageLayout) ctx.pageLayout.tables.push({ rows: grid.map(r => r.rowData.map(esc)), cols: numCols, latticeScore, streamScore, path: tablePath, confidence: tableConfidence, continuation: isContinuation });
 
             const firstItem = grid[0].line.cells.find(c => c.items.length)?.items[0];
             const parentLg = firstItem ? ctx.lineGroups.find(lg => lg.items.includes(firstItem)) : null;
@@ -1912,6 +1936,9 @@ var LiteDocCore = (function () {
                 // doc-level pre-route can't do any of that (one Japanese line on
                 // an English page is invisible to whole-page script detection).
                 const docOcrLang = (__litedocAddons && __litedocAddons._settings.ocrLang) || 'eng';
+
+                // Q4: table continuation state is per document, never per session.
+                if (typeof window !== 'undefined') window.__litedocTableState = {};
 
                 // pass 1: fingerprint
                 let allRawLineTexts = [];

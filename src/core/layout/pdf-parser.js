@@ -612,7 +612,6 @@ function segmentBox(boxItems, pageW, pageH, depth = 0) {
 
     return processSingleColumn(boxItems);
 }
-}
 
 export const executePdfConversion = async function (files) {
     showProgressState(true);
@@ -745,6 +744,9 @@ export const executePdfConversion = async function (files) {
             // doc-level pre-route can't do any of that (one Japanese line on
             // an English page is invisible to whole-page script detection).
             const docOcrLang = (addons.__litedocAddons && addons.__litedocAddons._settings.ocrLang) || 'eng';
+
+            // Q4: table continuation state is per document, never per session.
+            if (typeof window !== 'undefined') window.__litedocTableState = {};
 
             // pass 1: fingerprint
             let allRawLineTexts = [];

@@ -45,7 +45,7 @@ function clearOcrQueue() {
 // PDF Password Bypass Logic
 async function loadPdfWithPassword(arrayBuffer, fileName, password) {
     try {
-        const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, password, isEvalSupported: false });
+        const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, password });
         const pdf = await loadingTask.promise;
         return { pdf, password };
     } catch (err) {
@@ -523,6 +523,30 @@ async function processTableLines(linesToProcess, ctx, columnLabel, tableState) {
         }
 
         logToTerminal(`Table detection: Found table with ${grid.length} rows, ${numCols} cols`, 'success');
+    // Q4 candidate scoring: lattice evidence (rectangular fill plus
+    // column-boundary alignment) against stream evidence (numeric
+    // alignment plus fill). Both scores and the winning path are
+    // recorded on the page layout; the markdown reconstruction is
+    // shared, and the record documents which evidence dominated.
+    const cellTextsAll = [];
+    grid.forEach(r => r.rowData.forEach(c => { if (c.trim()) cellTextsAll.push(c.trim()); }));
+    const numericShare = cellTextsAll.length ? cellTextsAll.filter(c => /^[-+]?[0-9][0-9.,:%\s]*$/.test(c)).length / cellTextsAll.length : 0;
+    let alignHits = 0, alignTotal = 0;
+    for (const line of blockLines) {
+        for (const cell of line.cells) {
+            alignTotal++;
+            let best = Infinity;
+            for (const fc of finalCols) best = Math.min(best, Math.abs(cell.xMin - fc));
+            if (best <= 10) alignHits++;
+        }
+    }
+    const alignmentShare = alignTotal ? alignHits / alignTotal : 0;
+    const latticeScore = Math.round((0.5 * fillRatio + 0.5 * alignmentShare) * 100) / 100;
+    const streamScore = Math.round((0.5 * fillRatio + 0.5 * numericShare) * 100) / 100;
+    const tablePath = latticeScore >= streamScore ? 'lattice' : 'stream';
+    const tableConfidence = Math.max(latticeScore, streamScore);
+    logToTerminal(`Table detection: evidence lattice ${latticeScore}, stream ${streamScore}, path ${tablePath}`, 'info');
+
 
         for (const r of grid) {
             for (const cell of r.line.cells) {
@@ -584,6 +608,8 @@ async function processTableLines(linesToProcess, ctx, columnLabel, tableState) {
 
         if (parentLg) parentLg.injectedMarkdown = (parentLg.injectedMarkdown || '') + tableMd;
         else md += tableMd;
+
+        if (ctx.pageLayout && ctx.pageLayout.tables) ctx.pageLayout.tables.push({ rows: grid.map(r => r.rowData.map(esc)), cols: numCols, latticeScore, streamScore, path: tablePath, confidence: tableConfidence, continuation: isContinuation });
 
         tableState.idx++;
     }
