@@ -146,6 +146,149 @@ function segmentBox(boxItems, pageW, pageH, depth = 0) {
         return [];
     }
 
+    // ── Q2: XY-cut segmentation helpers ────────────────────────────────
+    // All vertical gutters from the same X-projection (no centre
+    // scoring): the cut chooses by width, not by page position.
+    function findAllVerticalGutters(items) {
+        if (items.length < 5) return [];
+        let minX = Infinity, maxX = -Infinity;
+        for (const item of items) {
+            minX = Math.min(minX, item.x);
+            maxX = Math.max(maxX, item.x + (item.width || 0));
+        }
+        const pageWidthApprox = maxX - minX;
+        if (pageWidthApprox < 20 * UX) return [];
+        const narrowItems = items.filter(item => {
+            if ((item.width || 0) > pageWidthApprox * 0.6) return false;
+            if (item.y < pageH * activeConfig.topMarginThreshold || item.y > pageH * activeConfig.bottomMarginThreshold) return false;
+            return true;
+        });
+        if (!narrowItems.length) return [];
+        let intervals = narrowItems.map(item => ({ start: item.x, end: item.x + (item.width || 0) }));
+        intervals.sort((a, b) => a.start - b.start);
+        const merged = [intervals[0]];
+        const mergeTolerance = 0.5 * UX;
+        for (let i = 1; i < intervals.length; i++) {
+            const curr = intervals[i];
+            const last = merged[merged.length - 1];
+            if (curr.start <= last.end + mergeTolerance) {
+                last.end = Math.max(last.end, curr.end);
+            } else {
+                merged.push(curr);
+            }
+        }
+        const gutters = [];
+        const minGutterWidth = Math.max(activeConfig.horizontalGapMin, 1.2 * UX);
+        for (let i = 1; i < merged.length; i++) {
+            const gap = merged[i].start - merged[i - 1].end;
+            if (gap >= minGutterWidth) gutters.push({ x: merged[i - 1].end + gap / 2, width: gap });
+        }
+        gutters.sort((a, b) => b.width - a.width);
+        return gutters;
+    }
+
+    // Cluster items into baseline bands, top first.
+    function bandItems(items) {
+        const sorted = [...items].sort((a, b) => b.y - a.y || a.x - b.x);
+        const bands = [];
+        for (const item of sorted) {
+            const last = bands[bands.length - 1];
+            const tol = Math.max(3, (item.height || 10) * 0.5);
+            if (last && Math.abs(item.y - last.y) <= tol) {
+                last.items.push(item);
+            } else {
+                bands.push({ y: item.y, items: [item] });
+            }
+        }
+        return bands;
+    }
+
+    // Split one baseline band into runs: maximal chains of items
+    // separated by less than a word-gap. A run is one line segment or
+    // one table cell, however many word items it arrived as.
+    function bandRuns(band) {
+        // Empty text runs (cell padding artefacts) carry no text and
+        // must not bridge two cells into one run.
+        const items = [...band.items].filter(it => (it.str || '').trim().length > 0).sort((a, b) => a.x - b.x);
+        const runs = [];
+        for (const item of items) {
+            const last = runs[runs.length - 1];
+            if (last && item.x - last.end <= 1.2 * UX) {
+                last.end = Math.max(last.end, item.x + (item.width || 0));
+                last.items.push(item);
+            } else {
+                runs.push({ start: item.x, end: item.x + (item.width || 0), items: [item] });
+            }
+        }
+        return runs;
+    }
+
+    function xStartClusters(band) {
+        return bandRuns(band).length;
+    }
+
+    // Recursive gutter-first cut. Wide items are pre-masked by the
+    // caller; items crossing the chosen gutter join them. A gutter is
+    // refused when both sides share 4 or more baselines and both form
+    // their own sub-grids: that is a table interior, not a page gutter,
+    // and tables stay atomic.
+    function cutOrSingle(items, depth) {
+        if (items.length < 5 || depth > 3) return processSingleColumn(items);
+        const gs = findAllVerticalGutters(items);
+        if (!gs.length) return processSingleColumn(items);
+        const g = gs[0];
+        const left = [], right = [], crossing = [];
+        for (const item of items) {
+            const l = item.x, r = item.x + (item.width || 0);
+            if (l < g.x - 0.5 * UX && r > g.x + 0.5 * UX) crossing.push(item);
+            else if ((l + r) / 2 < g.x) left.push(item);
+            else right.push(item);
+        }
+        if (left.length < 3 || right.length < 3) return processSingleColumn(items);
+        // Table-interior guard: see litedoc-core.js.
+        const bands = bandItems(items);
+        const startCounts = {};
+        for (const band of bands) {
+            const hasL = band.items.some(it => left.includes(it));
+            const hasR = band.items.some(it => right.includes(it));
+            if (!hasL || !hasR) continue;
+            for (const run of bandRuns(band)) {
+                const key = Math.round(run.start / (0.5 * UX));
+                startCounts[key] = (startCounts[key] || 0) + 1;
+            }
+        }
+        const recurringStarts = Object.values(startCounts).filter(c => c >= 4).length;
+        if (recurringStarts >= 3) return processSingleColumn(items);
+        const blocks = [...cutOrSingle(left, depth + 1), ...cutOrSingle(right, depth + 1)];
+        if (crossing.length) blocks.push(...processSingleColumn(crossing));
+        return blocks;
+    }
+
+    // One horizontal strip: runs of 3 or more consecutive bands that
+    // each carry 3 or more x-start clusters are grid runs (tables) and
+    // are kept atomic; the rest goes through the gutter cut.
+    function processStrip(items) {
+        const bands = bandItems(items);
+        const atomic = new Set();
+        let run = [];
+        const flush = () => {
+            if (run.length >= 3) run.forEach(b => b.items.forEach(it => atomic.add(it)));
+            run = [];
+        };
+        for (const band of bands) {
+            if (xStartClusters(band) >= 3) run.push(band);
+            else flush();
+        }
+        flush();
+        if (atomic.size === 0) return cutOrSingle(items, 0);
+        if (atomic.size === items.length) return processSingleColumn(items);
+        const atomicItems = items.filter(it => atomic.has(it));
+        const restItems = items.filter(it => !atomic.has(it));
+        const merged = [...processSingleColumn(atomicItems), ...cutOrSingle(restItems, 0)];
+        merged.sort((a, b) => b.bbox.yMax - a.bbox.yMax || a.bbox.xMin - b.bbox.xMin);
+        return merged;
+    }
+
     // ── Helper: group items into lines within a single column ──────────
     function groupIntoLines(items) {
         items.sort((a, b) => b.y - a.y || a.x - b.x);
@@ -409,13 +552,66 @@ function segmentBox(boxItems, pageW, pageH, depth = 0) {
 
     if (layoutType === 'Landscape/Presentation') {
         return processLandscape(boxItems);
-    } else if (layoutType === 'Multi-Column') {
-        return processMultiColumn(boxItems, gutterX);
-    } else if (layoutType === 'Complex/Mixed-Grid') {
-        return processComplexGrid(boxItems);
-    } else {
-        return processSingleColumn(boxItems);
     }
+
+    // Q2 XY-cut path: pre-mask page-wide elements, split the rest into
+    // horizontal strips on full-width clear bands, cut each strip on
+    // its widest gutter recursively, then re-insert the masked blocks
+    // by position through the topological sort. Pages with no gutter
+    // and a single strip keep the exact pre-Q2 single-column flow.
+    if (boxItems.length >= 5) {
+        let minX = Infinity, maxX = -Infinity;
+        for (const item of boxItems) {
+            minX = Math.min(minX, item.x);
+            maxX = Math.max(maxX, item.x + (item.width || 0));
+        }
+        const contentW = maxX - minX;
+        const wideItems = boxItems.filter(it => (it.width || 0) > contentW * 0.6);
+        const restItems = boxItems.filter(it => (it.width || 0) <= contentW * 0.6);
+        const heights = restItems.map(it => it.height || 10).sort((a, b) => a - b);
+        const medH = heights.length ? heights[Math.floor(heights.length / 2)] : 10;
+        const byY = [...restItems].sort((a, b) => b.y - a.y || a.x - b.x);
+        const strips = [];
+        let strip = [];
+        let prevY = null;
+        for (const item of byY) {
+            if (prevY !== null && prevY - item.y > Math.max(2.6 * medH, 1.2 * UY)) {
+                strips.push(strip);
+                strip = [];
+            }
+            strip.push(item);
+            prevY = item.y;
+        }
+        if (strip.length) strips.push(strip);
+        const usableStrips = strips.filter(st => st.length >= 3);
+        const hasGutter = usableStrips.some(st => findAllVerticalGutters(st).length > 0);
+        if (usableStrips.length > 1 || hasGutter) {
+            let blocks = [];
+            for (const st of usableStrips) blocks.push(...processStrip(st));
+            const leftovers = strips.filter(st => st.length < 3).flat();
+            if (leftovers.length) {
+                blocks.push(...processSingleColumn(leftovers));
+                blocks.sort((a, b) => b.bbox.yMax - a.bbox.yMax || a.bbox.xMin - b.bbox.xMin);
+            }
+                if (wideItems.length) {
+                    // Re-insert masked wide blocks by vertical position
+                    // only: before the first region block that lies
+                    // entirely below them. The region blocks keep their
+                    // cut order (a full topological sort would interleave
+                    // true columns row by row).
+                    const wideBlocks = processSingleColumn(wideItems);
+                    for (const wb of wideBlocks) {
+                        let idx = blocks.findIndex(b => b.bbox.yMax <= wb.bbox.yMin + 1);
+                        if (idx === -1) idx = blocks.length;
+                        blocks.splice(idx, 0, wb);
+                    }
+                }
+                return blocks;
+        }
+    }
+
+    return processSingleColumn(boxItems);
+}
 }
 
 export const executePdfConversion = async function (files) {
